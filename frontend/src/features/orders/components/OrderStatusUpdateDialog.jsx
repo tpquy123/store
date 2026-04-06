@@ -91,14 +91,12 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
   const fetchPickers = async () => {
     setIsFetchingPickers(true);
     try {
-      const pickerRole = isInStoreOrder
-        ? "WAREHOUSE_MANAGER"
-        : "WAREHOUSE_STAFF,WAREHOUSE_MANAGER";
+      const pickerRole = "WAREHOUSE_STAFF,WAREHOUSE_MANAGER,BRANCH_ADMIN,ADMIN,PRODUCT_MANAGER";
       const response = await userAPI.getAllEmployees({ role: pickerRole });
       setPickers(response.data.data.employees || []);
     } catch (error) {
-      console.error("Lỗi tải danh sách Warehouse Manager:", error);
-      toast.error("Không thể tải danh sách Warehouse Manager");
+      console.error("Lỗi tải danh sách nhân viên xử lý:", error);
+      toast.error("Không thể tải danh sách nhân viên xử lý");
       setPickers([]);
     } finally {
       setIsFetchingPickers(false);
@@ -146,16 +144,16 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
       const inStoreTransitionsByStage = {
         PENDING: [
           { value: "CONFIRMED", label: "Xác nhận đơn" },
-          { value: "PROCESSING", label: "Giao Warehouse Manager xử lý" },
+          { value: "PROCESSING", label: "Giao nhân viên xử lý" },
           { value: "CANCELLED", label: "Hủy đơn" },
         ],
         PENDING_ORDER_MANAGEMENT: [
-          { value: "PROCESSING", label: "Giao Warehouse Manager xử lý" },
+          { value: "PROCESSING", label: "Giao nhân viên xử lý" },
           { value: "CONFIRMED", label: "Xác nhận đơn (Bỏ qua kho)" }, // Optional shortcut
           { value: "CANCELLED", label: "Hủy đơn" },
         ],
         CONFIRMED: [
-          { value: "PROCESSING", label: "Giao Warehouse Manager xử lý" },
+          { value: "PROCESSING", label: "Giao nhân viên xử lý" },
           { value: "CANCELLED", label: "Hủy đơn" },
         ],
         PROCESSING: [
@@ -227,13 +225,9 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
       return;
     }
 
-    // ✅ Đơn IN_STORE cần chỉ định Warehouse Manager
+    // ✅ Đơn cần chỉ định nhân viên xử lý
     if (requiresPickerSelection && !selectedPicker) {
-      toast.error(
-        isInStoreOrder
-          ? "Vui lòng chọn Warehouse Manager"
-          : "Vui lòng chọn nhân viên kho"
-      );
+      toast.error("Vui lòng chọn nhân viên phụ trách xử lý");
       return;
     }
 
@@ -359,16 +353,12 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
           {/* ✅ Dropdown chọn người phụ trách lấy hàng */}
           {requiresPickerSelection && (
             <div className="space-y-2">
-              <Label htmlFor="picker">
-                {isInStoreOrder ? "Chọn Warehouse Manager *" : "Chọn nhân viên kho *"}
-              </Label>
+              <Label htmlFor="picker">Chọn nhân viên xử lý *</Label>
               {isFetchingPickers ? (
                 <div className="flex items-center justify-center p-3 border rounded-md">
                   <AlertCircle className="w-4 h-4 animate-spin mr-2" />
                   <span className="text-sm text-muted-foreground">
-                    {isInStoreOrder
-                      ? "Đang tải danh sách Warehouse Manager..."
-                      : "Đang tải danh sách nhân viên kho..."}
+                    Đang tải danh sách nhân viên xử lý...
                   </span>
                 </div>
               ) : (
@@ -379,23 +369,17 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
                     onChange={(e) => setSelectedPicker(e.target.value)}
                     className="w-full px-3 py-2 border rounded-md"
                   >
-                    <option value="">
-                      {isInStoreOrder
-                        ? "-- Chọn Warehouse Manager --"
-                        : "-- Chọn nhân viên kho --"}
-                    </option>
+                    <option value="">-- Chọn nhân viên xử lý --</option>
                     {pickers.map((p) => (
                       <option key={p._id} value={p._id}>
-                        {p.fullName} - {p.email}
+                        {p.fullName} - {p.email} ({p.role})
                       </option>
                     ))}
                   </select>
                   {pickers.length === 0 && (
                     <p className="text-sm text-yellow-600 flex items-center gap-2 mt-1">
                       <AlertCircle className="w-4 h-4" />
-                      {isInStoreOrder
-                        ? "Không có Warehouse Manager khả dụng"
-                        : "Không có nhân viên kho khả dụng"}
+                      Không có nhân viên nào khả dụng
                     </p>
                   )}
                 </>

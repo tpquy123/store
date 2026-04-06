@@ -15,6 +15,8 @@ import { PromotionsPage } from "@/features/promotions";
 import { HomePageEditor } from "@/features/content/homepage";
 import { ShortVideoAdminPage } from "@/features/content/videos";
 import { StoreManagementPage } from "@/features/stores";
+import WarehouseConfigPage from "@/features/warehouse/pages/WarehouseConfigPage";
+import WarehouseVisualizerPage from "@/features/warehouse/pages/WarehouseVisualizerPage";
 
 const adminRoutes = (
   <>
@@ -23,16 +25,11 @@ const adminRoutes = (
         <ProtectedRoute
           allowedPermissions={[
             "analytics.read.global",
+            "analytics.read.branch",
+            "analytics.read.assigned",
+            "users.manage.branch",
+            "users.manage.global",
             "store.manage",
-            "promotion.manage",
-            "content.manage",
-            "brand.manage",
-            "product_type.manage",
-            "inventory.read",
-            "inventory.write",
-            "device.read",
-            "device.write",
-            "order.audit.read",
           ]}
         >
           <DashboardLayout />
@@ -40,16 +37,108 @@ const adminRoutes = (
       }
     >
       <Route path="/admin" element={<AdminDashboard />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["promotion.manage"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/promotions" element={<PromotionsPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["content.manage"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/homepage-editor" element={<HomePageEditor />} />
       <Route path="/admin/short-videos" element={<ShortVideoAdminPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["brand.manage"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/brands" element={<BrandManagementPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["product_type.manage"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/product-types" element={<ProductTypeManagementPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["store.manage"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/stores" element={<StoreManagementPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["inventory.read", "warehouse.read"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/inventory-dashboard" element={<InventoryDashboard />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["inventory.write", "warehouse.write"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/stock-in" element={<StockInPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["device.read", "device.write"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/devices" element={<DeviceManagementPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["order.audit.read"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
       <Route path="/admin/audit-logs" element={<AuditLogPage />} />
+    </Route>
+
+    <Route
+      element={
+        <ProtectedRoute allowedPermissions={["order.pick.complete.instore"]}>
+          <DashboardLayout />
+        </ProtectedRoute>
+      }
+    >
+      <Route path="/admin/warehouse-config" element={<WarehouseConfigPage />} />
+      <Route path="/admin/warehouse-config/:id/visual" element={<WarehouseVisualizerPage />} />
     </Route>
 
     <Route

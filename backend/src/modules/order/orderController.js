@@ -1485,12 +1485,14 @@ const buildFilter = (req) => {
     andClauses.push({ createdAt });
   }
 
-  if (canViewOwnPosOrders(req) && !canViewBranchPosOrders(req)) {
+  const broadAccess = hasBroadOrderAccess(req);
+
+  if (canViewOwnPosOrders(req) && !canViewBranchPosOrders(req) && !req.authz?.isGlobalAdmin && !broadAccess) {
     andClauses.push({ orderSource: "IN_STORE" });
     andClauses.push({ "posInfo.staffId": req.user._id });
   }
 
-  if (canViewBranchPosOrders(req)) {
+  if (canViewBranchPosOrders(req) && !req.authz?.isGlobalAdmin && !broadAccess) {
     andClauses.push({ orderSource: "IN_STORE" });
   }
 
@@ -2173,11 +2175,11 @@ export const updateOrderStatus = async (req, res) => {
 
     if (targetStatus === "PREPARING_SHIPMENT") {
       if (inStoreOrder) {
-        if (!canCompleteInStorePick(req)) {
+        if (!canCompleteInStorePick(req) && !canManageWarehouseWorkflow(req)) {
           await session.abortTransaction();
           return res.status(403).json({
             success: false,
-            message: "Chỉ WAREHOUSE_MANAGER được xác nhận sẵn sàng bàn giao đơn IN_STORE",
+            message: "Bạn không có quyền xác nhận sẵn sàng bàn giao đơn IN_STORE",
           });
         }
 
@@ -2186,14 +2188,14 @@ export const updateOrderStatus = async (req, res) => {
           await session.abortTransaction();
           return res.status(403).json({
             success: false,
-            message: "Đơn hàng này được phân công cho Warehouse Manager khác",
+            message: "Đơn hàng này được phân công cho nhân viên xử lý khác",
           });
         }
       } else if (!canManageWarehouseWorkflow(req)) {
         await session.abortTransaction();
         return res.status(403).json({
           success: false,
-          message: "Chỉ WAREHOUSE_MANAGER hoặc WAREHOUSE_STAFF mới được xác nhận hoàn tất lấy hàng",
+          message: "Chỉ nhân viên kho hoặc quản lý kho mới được xác nhận hoàn tất lấy hàng",
         });
       }
     }

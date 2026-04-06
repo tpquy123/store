@@ -40,7 +40,7 @@ const PublicHeader = ({
               </div>
             </div>
 
-            {isAuthenticated && canManageCart && (
+            {canManageCart && (
               <button
                 onClick={() => navigate("/cart")}
                 className="bg-white text-black rounded-full p-2.5 relative"
@@ -82,7 +82,7 @@ const PublicHeader = ({
             </div>
 
             <div className="flex items-center gap-3">
-              {isAuthenticated && canManageCart && (
+              {canManageCart && (
                 <button
                   onClick={() => navigate("/cart")}
                   className="bg-white text-black rounded-full px-6 py-3 flex items-center gap-2 transition-all duration-300 hover:bg-gray-200 hover:scale-105 relative"

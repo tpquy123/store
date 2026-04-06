@@ -18,21 +18,12 @@ import {
 
 const warehouseRoutes = (
   <>
-    <Route
-      element={
-        <ProtectedRoute allowedPermissions={["order.pick.complete.instore"]}>
-          <DashboardLayout />
-        </ProtectedRoute>
-      }
-    >
-      <Route path="/admin/warehouse-config" element={<WarehouseConfigPage />} />
-      <Route path="/admin/warehouse-config/:id/visual" element={<WarehouseVisualizerPage />} />
-    </Route>
 
     <Route
       element={
         <ProtectedRoute
           allowedPermissions={[
+            "product.read",
             "product.create",
             "product.update",
             "product.delete",

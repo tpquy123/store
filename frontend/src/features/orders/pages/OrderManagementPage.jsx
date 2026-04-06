@@ -1024,6 +1024,10 @@ const OrderManagementPage = () => {
         order={selectedOrder}
         open={isDetailOpen}
         onClose={() => setIsDetailOpen(false)}
+        isGlobalAdmin={isGlobalAdmin}
+        stores={stores}
+        onReassignStore={handleReassignStore}
+        isAssigning={isOrderAssigning(selectedOrder?._id)}
       />
       <OrderStatusUpdateDialog
         order={statusDialogOrder}

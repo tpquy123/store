@@ -3,6 +3,7 @@ import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
 import { Label } from "@/shared/ui/label";
 import { Badge } from "@/shared/ui/badge";
+import { toast } from "sonner";
 import { Card, CardContent } from "@/shared/ui/card";
 import { Checkbox } from "@/shared/ui/checkbox";
 import { Loading } from "@/shared/ui/Loading";
@@ -630,7 +631,7 @@ const EmployeesPage = () => {
       }
       return;
     } catch (e) {
-      setError(e.response?.data?.message || "KhÃ´ng thá»ƒ táº£i quyá»n hiá»‡n táº¡i");
+      setError(e.response?.data?.message || "Không thể tải quyền hiện tại");
       return;
     }
     /*
@@ -709,10 +710,13 @@ const EmployeesPage = () => {
       } else {
         await userAPI.createEmployee(payload);
       }
+      toast.success("Tạo nhân viên thành công!");
       await fetchEmployees();
       closeDialog();
     } catch (e) {
-      setError(e.response?.data?.message || "Tạo nhân viên thất bại");
+      const errorMsg = e.response?.data?.message || "Tạo nhân viên thất bại";
+      setError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -733,10 +737,13 @@ const EmployeesPage = () => {
           buildPermissionPayload(editingEmployee._id),
         );
       }
+      toast.success("Cập nhật nhân viên thành công!");
       await fetchEmployees();
       closeDialog();
     } catch (e) {
-      setError(e.response?.data?.message || "Cập nhật thất bại");
+      const errorMsg = e.response?.data?.message || "Cập nhật thất bại";
+      setError(errorMsg);
+      toast.error(errorMsg);
     } finally {
       setIsSubmitting(false);
     }
@@ -930,7 +937,7 @@ const EmployeesPage = () => {
       {step === 3 ? (
         <div className="space-y-3">
           <div className="rounded border p-3">
-            <Label className="mb-2 block">Vai trÃ² Ä‘Æ°á»£c gÃ¡n</Label>
+            <Label className="mb-2 block">Vai trò được gán</Label>
             <div className="grid gap-2 md:grid-cols-2">
               {EMPLOYEE_TABS.filter((t) => t.value !== "ALL").map((t) => {
                 const checked = selectedRoleKeys.includes(t.value);
@@ -964,7 +971,7 @@ const EmployeesPage = () => {
                     </span>
                     {formData.role === t.value ? (
                       <Badge variant="outline" className="text-[10px]">
-                        ChÃ­nh
+                        Chính
                       </Badge>
                     ) : null}
                   </label>

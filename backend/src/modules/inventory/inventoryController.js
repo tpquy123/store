@@ -298,7 +298,7 @@ export const getConsolidatedInventory = async (req, res) => {
       { $sort: { totalAvailable: 1, _id: 1 } },
     ];
 
-    let inventory = await StoreInventory.aggregate(pipeline);
+    let inventory = await StoreInventory.aggregate(pipeline, { skipBranchIsolation: true });
 
     if (parseBool(lowStockOnly)) {
       inventory = inventory.filter(
@@ -380,7 +380,7 @@ export const getStoreInventoryComparison = async (req, res) => {
           },
         },
       },
-    ]);
+    ], { skipBranchIsolation: true });
 
     const statsByStore = new Map(
       groupedStats.map((item) => [String(item._id), item])

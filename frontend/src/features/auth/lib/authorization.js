@@ -52,27 +52,15 @@ export const resolveHomeRoute = ({ user, authz, authorization } = {}) => {
   const snapshot = getAuthorizationSnapshot({ authz, authorization });
   if (snapshot?.homeRoute) return snapshot.homeRoute;
 
+  if (isGlobalAdminAuthorization({ user, authz, authorization })) {
+    return "/admin";
+  }
+
   const permissionSet = getPermissionSet(snapshot);
   const hasAnyPermission = (keys = []) =>
     keys.some((key) => permissionSet.has(normalizePermissionKey(key)));
 
-  if (
-    hasAnyPermission([
-      "users.manage.global",
-      "users.manage.branch",
-      "analytics.read.global",
-      "analytics.read.branch",
-      "analytics.read.assigned",
-      "store.manage",
-      "promotion.manage",
-      "content.manage",
-      "brand.manage",
-      "product_type.manage",
-      "order.audit.read",
-    ])
-  ) {
-    return "/admin";
-  }
+  // Specific functional dashboards first
   if (hasAnyPermission(["product.create", "product.update", "product.delete", "product.read"])) {
     return "/warehouse/products";
   }
@@ -119,6 +107,25 @@ export const resolveHomeRoute = ({ user, authz, authorization } = {}) => {
   }
   if (hasAnyPermission(["task.read", "task.update", "order.view.assigned", "order.status.manage.task"])) {
     return "/shipper/dashboard";
+  }
+
+  // Admin dashboard as fallback for admin roles
+  if (
+    hasAnyPermission([
+      "users.manage.global",
+      "users.manage.branch",
+      "analytics.read.global",
+      "analytics.read.branch",
+      "analytics.read.assigned",
+      "store.manage",
+      "promotion.manage",
+      "content.manage",
+      "brand.manage",
+      "product_type.manage",
+      "order.audit.read",
+    ])
+  ) {
+    return "/admin";
   }
   if (
     hasAnyPermission([

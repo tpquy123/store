@@ -3,7 +3,14 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from "
 import { Button } from "@/shared/ui/button";
 import { Badge } from "@/shared/ui/badge";
 import { formatPrice, formatDate, getStatusColor, getStatusStage, getStatusText } from "@/shared/lib/utils";
-import { MapPin, User, Phone, Truck, Clock, Package } from "lucide-react";
+import { MapPin, User, Phone, Truck, Clock, Package, GitBranch, RefreshCw } from "lucide-react";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/shared/ui/select";
 
 const toTrimmedString = (value) => String(value || "").trim();
 
@@ -22,7 +29,15 @@ const getReturnReasonFromStatusHistory = (statusHistory) => {
   return "";
 };
 
-const OrderDetailDialog = ({ order, open, onClose }) => {
+const OrderDetailDialog = ({
+  order,
+  open,
+  onClose,
+  isGlobalAdmin = false,
+  stores = [],
+  onReassignStore = null,
+  isAssigning = false,
+}) => {
   if (!order) return null;
   const stage = order.statusStage || getStatusStage(order.status);
   const isReturnedOrder = toTrimmedString(order?.status).toUpperCase() === "RETURNED";
@@ -51,11 +66,52 @@ const OrderDetailDialog = ({ order, open, onClose }) => {
     return `${baseUrl}${path.startsWith("/") ? "" : "/"}${path}`;
   };
 
+  const canUpdateOrderStatus = (order) => {
+    const nonEditableStages = ["CANCELLED", "RETURNED", "DELIVERED"];
+    return !nonEditableStages.includes(stage);
+  };
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="max-w-4xl max-h-[90vh] overflow-y-auto">
         <DialogHeader>
-          <DialogTitle>Chi tiết đơn hàng #{order.orderNumber}</DialogTitle>
+          <div className="flex items-center justify-between pr-8">
+            <DialogTitle>Chi tiết đơn hàng #{order.orderNumber}</DialogTitle>
+            {isGlobalAdmin && canUpdateOrderStatus(order) && (
+              <div className="flex items-center gap-2">
+                <div className="w-48">
+                  <Select
+                    disabled={isAssigning || stores.length === 0}
+                    onValueChange={(value) => onReassignStore?.(order._id, value)}
+                    value={
+                      order.assignedStore?.storeId
+                        ? String(order.assignedStore.storeId)
+                        : ""
+                    }
+                  >
+                    <SelectTrigger className="h-9 border-blue-200 bg-blue-50/50 hover:bg-blue-50 transition-colors">
+                      <div className="flex items-center gap-2 truncate">
+                        <GitBranch className="w-3.5 h-3.5 text-blue-500 flex-shrink-0" />
+                        <SelectValue
+                          placeholder={
+                            stores.length === 0 ? "Đang tải..." : "Chuyển chi nhánh"
+                          }
+                        />
+                      </div>
+                    </SelectTrigger>
+                    <SelectContent>
+                      {stores.map((s) => (
+                        <SelectItem key={s._id} value={s._id}>
+                          {s.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </div>
+                {isAssigning && <RefreshCw className="w-4 h-4 animate-spin text-blue-600" />}
+              </div>
+            )}
+          </div>
         </DialogHeader>
 
         <div className="space-y-6">

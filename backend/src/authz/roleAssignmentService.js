@@ -218,6 +218,25 @@ export const buildLegacyRoleAssignmentsFromUser = (user = {}) => {
   const assignments = [];
   const branchAssignments = Array.isArray(user?.branchAssignments) ? user.branchAssignments : [];
 
+  const legacyRole = String(user?.role || "").trim().toUpperCase();
+
+  // Add fallback for GLOBAL_ADMIN from legacy role field mapping
+  if (legacyRole === "GLOBAL_ADMIN") {
+    assignments.push({
+      roleKey: "GLOBAL_ADMIN",
+      scopeType: "GLOBAL",
+      scopeRef: "",
+      metadata: { source: "legacy_role_fallback" },
+    });
+  } else if (legacyRole === "CUSTOMER") {
+    assignments.push({
+      roleKey: "CUSTOMER",
+      scopeType: "SELF",
+      scopeRef: "",
+      metadata: { source: "legacy_role_fallback" },
+    });
+  }
+
   for (const roleKey of Array.isArray(user?.systemRoles) ? user.systemRoles : []) {
     assignments.push({
       roleKey: normalizeRoleKey(roleKey),

@@ -36,7 +36,8 @@ export const resolveAccessContext = async (req, res, next) => {
     permissionSet.has(AUTHZ_ACTIONS.ACCOUNT_PROFILE_UPDATE_SELF) ||
     permissionSet.has(AUTHZ_ACTIONS.CART_MANAGE_SELF) ||
     permissionSet.has(AUTHZ_ACTIONS.REVIEW_CREATE_SELF) ||
-    permissionSet.has(AUTHZ_ACTIONS.PROMOTION_APPLY_SELF);
+    permissionSet.has(AUTHZ_ACTIONS.PROMOTION_APPLY_SELF) ||
+    String(req.user.role || "").trim().toUpperCase() === "CUSTOMER";
   const isShipper =
     permissionSet.has(AUTHZ_ACTIONS.TASK_READ) ||
     permissionSet.has(AUTHZ_ACTIONS.TASK_UPDATE) ||
@@ -57,7 +58,6 @@ export const resolveAccessContext = async (req, res, next) => {
   const isBranchScopedStaff =
     !isGlobalAdmin &&
     !isCustomer &&
-    !isShipper &&
     requiresBranchAssignment;
 
   if (isBranchScopedStaff && allowedBranchIds.length === 0) {

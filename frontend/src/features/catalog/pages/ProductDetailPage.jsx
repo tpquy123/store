@@ -272,7 +272,17 @@ const ProductDetailPage = () => {
         setShowAddToCartModal(true);
       }
     } else {
-      alert(result.message || "Thêm vào giỏ thất bại");
+      // ✅ CHI TIẾT LỖI 403 / AUTHZ
+      const errorMsg = result.message || "Không thể thêm sản phẩm vào giỏ hàng";
+      const errorCode = result.code || result.errorCode || "";
+      
+      console.warn("[Cart Error]", { errorCode, errorMsg });
+      
+      if (errorCode === "AUTHZ_BRANCH_FORBIDDEN" || errorCode === "AUTHZ_ACTION_DENIED") {
+        alert("Lỗi phân quyền. Vui lòng đăng nhập lại hoặc liên hệ quản trị viên.");
+      } else {
+        alert(errorMsg);
+      }
     }
   };
   const formatPrice = (price) => {

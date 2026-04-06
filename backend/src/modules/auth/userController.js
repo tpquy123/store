@@ -1,4 +1,4 @@
-﻿import User from "./User.js";
+import User from "./User.js";
 import { deriveAuthzWriteFromLegacyInput } from "../../authz/userAccessResolver.js";
 import mongoose from "mongoose";
 import Store from "../store/Store.js";
@@ -33,7 +33,7 @@ const BRANCH_REQUIRED_EMPLOYEE_ROLES = new Set([
   "ORDER_MANAGER",
   "POS_STAFF",
   "CASHIER",
-  "SHIPPER",
+  "CASHIER",
 ]);
 
 const LEGACY_ROLE_TO_CANONICAL_BRANCH_ROLE = Object.freeze({

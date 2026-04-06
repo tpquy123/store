@@ -132,7 +132,7 @@ export const normalizeUserAccess = (user) => {
   const preferredBranchId =
     defaultBranchId && allowedBranchIds.includes(defaultBranchId) ? defaultBranchId : "";
   const requiresBranchAssignment = branchAssignments.length > 0;
-  const isGlobalAdmin = systemRoles.includes("GLOBAL_ADMIN");
+  const isGlobalAdmin = systemRoles.includes("GLOBAL_ADMIN") || role === "GLOBAL_ADMIN";
   const permissionMode = "HYBRID";
 
   return {

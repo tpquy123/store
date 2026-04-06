@@ -52,7 +52,7 @@ router.get(
 );
 router.get(
   "/dashboard/store-comparison",
-  authorize(AUTHZ_ACTIONS.ANALYTICS_READ_GLOBAL, { scopeMode: "global", resourceType: "INVENTORY" }),
+  authorize(AUTHZ_ACTIONS.ANALYTICS_READ_BRANCH, { scopeMode: "branch", resourceType: "INVENTORY" }),
   getStoreInventoryComparison
 );
 router.get(

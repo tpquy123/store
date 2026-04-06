@@ -148,64 +148,45 @@ const InventoryDashboard = () => {
       const normalizedSku = String(skuFilterApplied || "").trim().toUpperCase();
       if (normalizedSku) consolidatedParams.sku = normalizedSku;
 
-      const [
-        consolidatedRes,
-        comparisonRes,
-        alertsRes,
-        movementsRes,
-        transfersRes,
-        replenishmentRes,
-        predictionsRes,
-      ] = await Promise.all([
-        inventoryAPI.getConsolidated(consolidatedParams),
-        inventoryAPI.getStoreComparison(),
-        inventoryAPI.getAlerts({ limit: 20 }),
-        inventoryAPI.getMovements({ days: 7, limit: 20 }),
-        stockTransferAPI.getAll({ limit: 20 }),
-        inventoryAPI.getReplenishment({ limit: 20 }),
-        inventoryAPI.getPredictions({
+      // Use a helper to swallow errors for individual calls
+      const safeFetch = async (promise, setter, defaultVal = []) => {
+        try {
+          const res = await promise;
+          setter(res.data?.inventory || res.data?.comparison || res.data?.needsAttention || res.data?.alerts || res.data?.movements || res.data?.transfers || res.data?.recommendations || res.data?.predictions || res.data || defaultVal);
+          
+          // Special case for summaries and extra fields
+          if (res.data?.summary) {
+            if (setter === setConsolidatedInventory) setConsolidatedSummary(res.data.summary);
+            if (setter === setAlerts) setAlertSummary(res.data.summary);
+            if (setter === setReplenishment) setReplenishmentSummary(res.data.summary);
+            if (setter === setPredictions) setPredictionSummary(res.data.summary);
+          }
+          if (res.data?.needsAttention && setter === setStoreComparison) {
+            setStoresNeedingAttention(res.data.needsAttention);
+          }
+          if (res.data?.snapshot && setter === setReplenishment) setReplenishmentSnapshot(res.data.snapshot);
+          if (res.data?.dataSource && setter === setReplenishment) setReplenishmentDataSource(res.data.dataSource);
+          
+        } catch (err) {
+          console.error("Dashboard component load error:", err);
+          // We don't toast here to avoid spamming the user if multiple fail
+        }
+      };
+
+      await Promise.all([
+        safeFetch(inventoryAPI.getConsolidated(consolidatedParams), setConsolidatedInventory),
+        safeFetch(inventoryAPI.getStoreComparison(), setStoreComparison),
+        safeFetch(inventoryAPI.getAlerts({ limit: 20 }), setAlerts),
+        safeFetch(inventoryAPI.getMovements({ days: 7, limit: 20 }), setMovements),
+        safeFetch(stockTransferAPI.getAll({ limit: 20 }), setTransfers),
+        safeFetch(inventoryAPI.getReplenishment({ limit: 20 }), setReplenishment),
+        safeFetch(inventoryAPI.getPredictions({
           limit: 20,
           lowStockOnly: true,
           daysAhead: 7,
           historicalDays: 90,
-        }),
+        }), setPredictions),
       ]);
-
-      setConsolidatedInventory(consolidatedRes.data?.inventory || []);
-      setConsolidatedSummary(
-        consolidatedRes.data?.summary || {
-          totalSKUs: 0,
-          totalValue: 0,
-          lowStockCount: 0,
-        }
-      );
-      setStoreComparison(comparisonRes.data?.comparison || []);
-      setStoresNeedingAttention(comparisonRes.data?.needsAttention || []);
-      setAlerts(alertsRes.data?.alerts || []);
-      setAlertSummary(alertsRes.data?.summary || { total: 0, critical: 0, high: 0 });
-      setMovements(movementsRes.data?.movements || []);
-      setTransfers(transfersRes.data?.transfers || []);
-      setReplenishment(replenishmentRes.data?.recommendations || []);
-      setReplenishmentSummary(
-        replenishmentRes.data?.summary || {
-          totalRecommendations: 0,
-          criticalCount: 0,
-          highCount: 0,
-          interStoreCount: 0,
-          warehouseCount: 0,
-        }
-      );
-      setReplenishmentSnapshot(replenishmentRes.data?.snapshot || null);
-      setReplenishmentDataSource(replenishmentRes.data?.dataSource || "LIVE");
-      setPredictions(predictionsRes.data?.predictions || []);
-      setPredictionSummary(
-        predictionsRes.data?.summary || {
-          totalPredictions: 0,
-          criticalCount: 0,
-          highCount: 0,
-          totalSuggestedQuantity: 0,
-        }
-      );
       setLastUpdated(new Date());
     } catch (error) {
       toast.error(error.response?.data?.message || "Không thể tải bảng điều khiển kho");

@@ -5,6 +5,7 @@ import { useAuthStore } from "@/features/auth";
 import {
   getAuthorizationSnapshot,
   hasPermissionSnapshot,
+  isGlobalAdminAuthorization,
   resolveHomeRoute,
 } from "@/features/auth/lib/authorization";
 import { useCartStore } from "@/features/cart";
@@ -100,7 +101,10 @@ const PublicLayout = () => {
   const [selectedDistrict, setSelectedDistrict] = useState(0);
   const [footerProductTypes, setFooterProductTypes] = useState([]);
   const snapshot = getAuthorizationSnapshot({ authz, authorization });
-  const canManageCart = hasPermissionSnapshot(snapshot, "cart.manage.self");
+  const canManageCart =
+    isGlobalAdminAuthorization({ user, authz, authorization }) ||
+    hasPermissionSnapshot(snapshot, "cart.manage.self") ||
+    !user; // Cho phép Guest sử dụng giỏ hàng (local)
   const canAccessCustomerSelfService = hasPermissionSnapshot(
     snapshot,
     [
@@ -154,11 +158,8 @@ const PublicLayout = () => {
   }, []);
 
   const handleProfileNavigation = () => {
-    if (canAccessCustomerSelfService) {
-      navigate("/profile");
-      return;
-    }
-    navigate(resolveHomeRoute({ user, authz, authorization }) || "/");
+    const homeRoute = resolveHomeRoute({ user, authz, authorization });
+    navigate(homeRoute || "/");
   };
 
   const filteredStores =
