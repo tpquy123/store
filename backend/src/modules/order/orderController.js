@@ -761,17 +761,6 @@ const restoreInventoryForReturn = async ({
 } = {}) => {
   const fallbackStoreId = normalizeBranchId(order?.assignedStore?.storeId);
 
-  const skuMetaMap = new Map();
-  for (const item of Array.isArray(order?.items) ? order.items : []) {
-    const sku = String(item?.variantSku || "").trim();
-    if (!sku || skuMetaMap.has(sku)) {
-      continue;
-    }
-    skuMetaMap.set(sku, {
-      productId: item?.productId || null,
-      productName: item?.productName || item?.name || sku,
-    });
-  }
 
   const movements = await StockMovement.find({
     referenceType: "ORDER",
