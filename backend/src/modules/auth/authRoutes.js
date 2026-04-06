@@ -13,10 +13,14 @@ import {
   setSimulatedBranchContext,
   clearSimulatedBranchContext,
 } from "./authController.js";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { checkPermission } from "../../middleware/authz/checkPermission.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 const router = express.Router();
+
+const resolveUserScopeMode = (req) => (req.authz?.isGlobalAdmin ? "global" : "branch");
 
 router.post("/register", register);
 router.post("/login", login);
@@ -28,7 +32,27 @@ router.put("/context/simulate-branch", protect, resolveAccessContext, setSimulat
 router.delete("/context/simulate-branch", protect, resolveAccessContext, clearSimulatedBranchContext);
 router.put("/change-password", protect, changePassword);
 router.put("/avatar", protect, updateAvatar);
-router.get("/check-customer", protect, restrictTo("POS_STAFF", "ADMIN"), checkCustomerByPhone);
-router.post("/quick-register", protect, restrictTo("POS_STAFF", "ADMIN"), quickRegisterCustomer);
+router.get(
+  "/check-customer",
+  protect,
+  resolveAccessContext,
+  checkPermission(AUTHZ_ACTIONS.USERS_READ_BRANCH, {
+    scopeMode: resolveUserScopeMode,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "USER",
+  }),
+  checkCustomerByPhone
+);
+router.post(
+  "/quick-register",
+  protect,
+  resolveAccessContext,
+  checkPermission(AUTHZ_ACTIONS.USERS_MANAGE_BRANCH, {
+    scopeMode: resolveUserScopeMode,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "USER",
+  }),
+  quickRegisterCustomer
+);
 
 export default router;

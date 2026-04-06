@@ -10,6 +10,7 @@ import config from "../config/config.js";
 import userRoutes from "../modules/auth/userRoutes.js";
 import User from "../modules/auth/User.js";
 import Store from "../modules/store/Store.js";
+import UserPermissionGrant from "../modules/auth/UserPermissionGrant.js";
 
 let mongoServer;
 let app;
@@ -65,7 +66,7 @@ beforeEach(async () => {
     createStore({ code: "BRB", name: "Branch B" }),
   ]);
 
-  const [branchAdmin, outsideStaff] = await Promise.all([
+  const [branchAdmin, outsideStaff, globalAdmin] = await Promise.all([
     User.create({
       role: "BRANCH_ADMIN",
       fullName: "Branch Admin",
@@ -98,6 +99,14 @@ beforeEach(async () => {
         },
       ],
     }),
+    User.create({
+      role: "GLOBAL_ADMIN",
+      fullName: "Global Admin",
+      phoneNumber: nextPhone(),
+      password: "Strong@1234",
+      status: "ACTIVE",
+      systemRoles: ["GLOBAL_ADMIN"],
+    }),
   ]);
 
   fixture = {
@@ -105,6 +114,7 @@ beforeEach(async () => {
     storeB,
     branchAdmin,
     outsideStaff,
+    globalAdmin,
   };
 });
 
@@ -157,3 +167,40 @@ test("branch admin cannot toggle status for employee outside assigned branches",
   assert.equal(response.body?.code, "AUTHZ_BRANCH_FORBIDDEN");
 });
 
+test("explicit SELF permissions bind to target user during create", async () => {
+  const token = createToken(fixture.globalAdmin);
+  const response = await request(app)
+    .post("/api/users/employees")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      fullName: "Self Scope User",
+      phoneNumber: nextPhone(),
+      password: "Strong@1234",
+      role: "POS_STAFF",
+      storeLocation: String(fixture.storeA._id),
+      branchIds: [String(fixture.storeA._id)],
+      enableGranularPermissions: true,
+      permissions: [
+        {
+          key: "analytics.read.personal",
+          scopeType: "SELF",
+          scopeId: "new-user-preview",
+        },
+      ],
+    });
+
+  assert.equal(response.status, 201);
+  const createdUserId = response.body?.data?.user?._id;
+  assert.ok(createdUserId);
+
+  const grants = await UserPermissionGrant.find({
+    userId: createdUserId,
+    status: "ACTIVE",
+  })
+    .lean();
+
+  const selfGrant = grants.find((row) => String(row.permissionKey) === "analytics.read.personal");
+
+  assert.ok(selfGrant, "Expected analytics.read.personal grant");
+  assert.equal(String(selfGrant.scopeRef || ""), String(createdUserId));
+});

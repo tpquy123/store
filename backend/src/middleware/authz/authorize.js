@@ -11,6 +11,23 @@ const resolveValue = (valueOrResolver, req, fallback) => {
   return valueOrResolver;
 };
 
+const resolveRequiredPermissions = (actionOrResolver, options, req) => {
+  const explicitAnyOf = resolveValue(options.anyOf, req, []);
+  const explicitAllOf = resolveValue(options.allOf, req, []);
+  const action = resolveValue(actionOrResolver, req, "");
+
+  const anyOf = Array.isArray(explicitAnyOf) ? explicitAnyOf.filter(Boolean) : [];
+  const allOf = Array.isArray(explicitAllOf) ? explicitAllOf.filter(Boolean) : [];
+
+  if (allOf.length > 0) {
+    return { mode: "all", permissions: allOf };
+  }
+  if (anyOf.length > 0) {
+    return { mode: "any", permissions: anyOf };
+  }
+  return { mode: "all", permissions: action ? [action] : [] };
+};
+
 const defaultMessageByCode = Object.freeze({
   AUTHZ_ACTION_DENIED: "You do not have permission to perform this action",
   AUTHZ_GLOBAL_SCOPE_DENIED: "Global scope is not allowed for this account",
@@ -29,7 +46,8 @@ export const authorize = (actionOrResolver, options = {}) => async (req, res, ne
     });
   }
 
-  const action = resolveValue(actionOrResolver, req, "");
+  const { mode: permissionMode, permissions: requiredPermissions } =
+    resolveRequiredPermissions(actionOrResolver, options, req);
   const scopeMode = resolveValue(options.scopeMode, req, "branch");
   const requireActiveBranch = Boolean(
     options.requireActiveBranch ||
@@ -37,39 +55,71 @@ export const authorize = (actionOrResolver, options = {}) => async (req, res, ne
         options.requireActiveBranchFor.includes(scopeMode))
   );
   const resource = resolveValue(options.resource, req, null);
+  const decisions = requiredPermissions.map((permission) => ({
+    permission,
+    decision: evaluatePolicy({
+      action: permission,
+      authz: req.authz,
+      mode: scopeMode,
+      requireActiveBranch,
+      resource,
+    }),
+  }));
+  const matchedDecision =
+    permissionMode === "any"
+      ? decisions.find((entry) => entry.decision.allowed)
+      : decisions.find((entry) => !entry.decision.allowed);
+  const decision =
+    permissionMode === "any"
+      ? matchedDecision?.decision || decisions[0]?.decision || { allowed: true, code: "AUTHZ_ALLOWED" }
+      : matchedDecision?.decision || decisions[0]?.decision || { allowed: true, code: "AUTHZ_ALLOWED" };
+  const allowed =
+    requiredPermissions.length === 0
+      ? true
+      : permissionMode === "any"
+        ? decisions.some((entry) => entry.decision.allowed)
+        : decisions.every((entry) => entry.decision.allowed);
 
-  const decision = evaluatePolicy({
-    action,
-    authz: req.authz,
-    mode: scopeMode,
-    requireActiveBranch,
-    resource,
-  });
+  const resolvedConditions = resolveValue(options.conditionsResolver, req, null);
+  const conditionOutcome =
+    typeof resolvedConditions === "function" ? resolvedConditions(req) : resolvedConditions;
+  const conditionDenied =
+    conditionOutcome &&
+    ((typeof conditionOutcome === "object" && conditionOutcome.allowed === false) ||
+      conditionOutcome === false);
 
-  if (!decision.allowed) {
+  if (!allowed || conditionDenied) {
+    const denyDecision = conditionDenied
+      ? {
+          allowed: false,
+          code: conditionOutcome.code || "AUTHZ_CONDITION_DENIED",
+          message: conditionOutcome.message || "Additional authorization conditions failed",
+        }
+      : decision;
     await logAuthzDecision({
       req,
-      action,
+      action: requiredPermissions.join(" || "),
       decision: "DENY",
-      reasonCode: decision.code,
+      reasonCode: denyDecision.code,
       scopeMode,
       resourceType: options.resourceType || "",
       resourceId: resource?.id || resource?._id || resource?.resourceId || "",
       metadata: {
-        message: decision.message,
+        message: denyDecision.message,
       },
     });
 
     return res.status(403).json({
       success: false,
-      code: decision.code,
-      message: defaultMessageByCode[decision.code] || decision.message,
+      code: denyDecision.code,
+      message: defaultMessageByCode[denyDecision.code] || denyDecision.message,
     });
   }
 
   req.authz = {
     ...req.authz,
-    authorizedAction: action,
+    authorizedAction: matchedDecision?.permission || requiredPermissions[0] || "",
+    authorizedActions: requiredPermissions,
     scopeMode,
     authorizedResource: resource || null,
   };
@@ -77,7 +127,7 @@ export const authorize = (actionOrResolver, options = {}) => async (req, res, ne
   if (options.audit !== false) {
     await logAuthzDecision({
       req,
-      action,
+      action: requiredPermissions.join(permissionMode === "any" ? " || " : " && "),
       decision: "ALLOW",
       reasonCode: decision.code,
       scopeMode,

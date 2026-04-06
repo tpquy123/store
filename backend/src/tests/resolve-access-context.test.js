@@ -72,7 +72,16 @@ test("resolveAccessContext denies manual branch switch via header for staff", as
 
 test("resolveAccessContext denies staff with no branch assignment", async () => {
   const req = {
-    user: buildStaffUser({ branchAssignments: [] }),
+    user: buildStaffUser({
+      branchAssignments: [
+        {
+          storeId: "BRANCH_A",
+          roles: ["POS_STAFF"],
+          status: "SUSPENDED",
+          isPrimary: true,
+        },
+      ],
+    }),
     headers: {},
   };
   const res = createMockRes();

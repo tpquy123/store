@@ -2,17 +2,27 @@
 import { deriveAuthzWriteFromLegacyInput } from "../../authz/userAccessResolver.js";
 import mongoose from "mongoose";
 import Store from "../store/Store.js";
-import { ensurePermissionCatalogSeeded, getPermissionCatalog } from "../../authz/permissionCatalog.js";
+import {
+  ensurePermissionCatalogSeeded,
+  getPermissionCatalog,
+} from "../../authz/permissionCatalog.js";
 import {
   ensurePermissionTemplatesSeeded,
   getPermissionTemplates,
 } from "../../authz/permissionTemplateService.js";
 import {
   applyUserPermissionAssignments,
+  loadActiveUserPermissionGrants,
   normalizeRequestedPermissionAssignments,
   validateGrantAntiEscalation,
 } from "../../authz/userPermissionService.js";
 import { resolveEffectiveAccessContext } from "../../authz/authorizationService.js";
+import { SYSTEM_ROLES, BRANCH_ROLES, TASK_ROLES } from "../../authz/actions.js";
+import { omniLog } from "../../utils/logger.js";
+import {
+  normalizeRequestedRoleAssignments as normalizeCanonicalRoleAssignments,
+  syncUserRoleAssignments,
+} from "../../authz/roleAssignmentService.js";
 
 const BRANCH_REQUIRED_EMPLOYEE_ROLES = new Set([
   "ADMIN",
@@ -25,6 +35,14 @@ const BRANCH_REQUIRED_EMPLOYEE_ROLES = new Set([
   "CASHIER",
   "SHIPPER",
 ]);
+
+const LEGACY_ROLE_TO_CANONICAL_BRANCH_ROLE = Object.freeze({
+  ADMIN: "BRANCH_ADMIN",
+});
+
+const CANONICAL_BRANCH_ROLE_TO_LEGACY_ROLE = Object.freeze({
+  BRANCH_ADMIN: "ADMIN",
+});
 
 const normalizeText = (value) => String(value || "").trim();
 const toUniqueStrings = (items = []) =>
@@ -41,21 +59,32 @@ const toAppError = (status, code, message, details = null) => {
 };
 
 const collectBranchIds = (payload = {}) => {
-  const directBranchIds = Array.isArray(payload.branchIds) ? payload.branchIds : [];
+  const directBranchIds = Array.isArray(payload.branchIds)
+    ? payload.branchIds
+    : [];
   const scopedBranchIds = Array.isArray(payload?.branchScope?.branchIds)
     ? payload.branchScope.branchIds
     : [];
 
   const fallbackBranchId =
-    normalizeText(payload?.branchScope?.primaryBranchId) || normalizeText(payload.storeLocation);
+    normalizeText(payload?.branchScope?.primaryBranchId) ||
+    normalizeText(payload.storeLocation);
 
-  return toUniqueStrings([...directBranchIds, ...scopedBranchIds, fallbackBranchId]);
+  return toUniqueStrings([
+    ...directBranchIds,
+    ...scopedBranchIds,
+    fallbackBranchId,
+  ]);
 };
 
 const collectTemplateKeys = (payload = {}) => {
   const singleTemplate = normalizeText(payload.templateKey);
-  const bulkTemplates = Array.isArray(payload.templateKeys) ? payload.templateKeys : [];
-  return toUniqueStrings([singleTemplate, ...bulkTemplates]).map((item) => item.toUpperCase());
+  const bulkTemplates = Array.isArray(payload.templateKeys)
+    ? payload.templateKeys
+    : [];
+  return toUniqueStrings([singleTemplate, ...bulkTemplates]).map((item) =>
+    item.toUpperCase(),
+  );
 };
 
 const hasGranularPermissionPayload = (payload = {}) => {
@@ -67,6 +96,13 @@ const hasGranularPermissionPayload = (payload = {}) => {
   );
 };
 
+const hasCanonicalRolePayload = (payload = {}) => {
+  return (
+    (Array.isArray(payload?.roleAssignments) && payload.roleAssignments.length > 0) ||
+    (Array.isArray(payload?.roleKeys) && payload.roleKeys.length > 0)
+  );
+};
+
 const assertActorBranchScope = (req, branchIds = []) => {
   if (req?.authz?.isGlobalAdmin || !branchIds.length) {
     return;
@@ -75,14 +111,16 @@ const assertActorBranchScope = (req, branchIds = []) => {
   const allowedBranches = Array.isArray(req?.authz?.allowedBranchIds)
     ? req.authz.allowedBranchIds.map((item) => normalizeText(item))
     : [];
-  const forbidden = branchIds.filter((branchId) => !allowedBranches.includes(normalizeText(branchId)));
+  const forbidden = branchIds.filter(
+    (branchId) => !allowedBranches.includes(normalizeText(branchId)),
+  );
 
   if (forbidden.length) {
     throw toAppError(
       403,
       "AUTHZ_BRANCH_FORBIDDEN",
       "Cannot assign user to branch outside actor scope",
-      { forbiddenBranchIds: forbidden }
+      { forbiddenBranchIds: forbidden },
     );
   }
 };
@@ -109,14 +147,14 @@ const assertActorCanManageTargetUser = (req, user = {}) => {
   }
 
   const forbidden = targetBranches.filter(
-    (branchId) => !actorAllowedBranches.includes(normalizeText(branchId))
+    (branchId) => !actorAllowedBranches.includes(normalizeText(branchId)),
   );
   if (forbidden.length) {
     throw toAppError(
       403,
       "AUTHZ_BRANCH_FORBIDDEN",
       "Cannot manage user outside actor branch scope",
-      { forbiddenBranchIds: forbidden }
+      { forbiddenBranchIds: forbidden },
     );
   }
 };
@@ -131,25 +169,103 @@ const assertActorCanAssignRole = (req, role) => {
     throw toAppError(
       403,
       "AUTHZ_ROLE_FORBIDDEN",
-      "Only global admin can assign GLOBAL_ADMIN role"
+      "Only global admin can assign GLOBAL_ADMIN role",
     );
   }
 };
 
-const syncExplicitPermissionsForUser = async ({ req, user, payload, reason = "" }) => {
+const assertActorCanAssignRoles = (req, roles = []) => {
+  for (const role of roles) {
+    assertActorCanAssignRole(req, role);
+  }
+};
+
+const resolveCanonicalRoleAssignmentsFromPayload = async (req, payload = {}) => {
+  await ensurePermissionTemplatesSeeded();
+  const normalizedAssignments = await normalizeCanonicalRoleAssignments(payload);
+  if (!normalizedAssignments.length) {
+    throw toAppError(
+      400,
+      "AUTHZ_ROLE_ASSIGNMENTS_REQUIRED",
+      "At least one valid role assignment is required",
+    );
+  }
+  const roleKeys = normalizedAssignments.map((assignment) => assignment.roleKey);
+  assertActorCanAssignRoles(req, roleKeys);
+
+  const branchIds = normalizedAssignments
+    .filter((assignment) => String(assignment.scopeType || "").toUpperCase() === "BRANCH")
+    .map((assignment) => assignment.scopeRef);
+  assertActorBranchScope(req, branchIds);
+
+  return normalizedAssignments;
+};
+
+const syncExplicitPermissionsForUser = async ({
+  req,
+  user,
+  payload,
+  reason = "",
+}) => {
+  await ensurePermissionTemplatesSeeded();
   const templateKeys = collectTemplateKeys(payload);
   const branchIds = collectBranchIds(payload);
+  const requestedPermissions = Array.isArray(payload.permissions)
+    ? payload.permissions
+    : [];
 
-  const { assignments, errors } = await normalizeRequestedPermissionAssignments({
-    permissions: Array.isArray(payload.permissions) ? payload.permissions : [],
+  omniLog.debug("authz.permissionSync.request", {
+    targetUserId: String(user?._id || ""),
+    actorId: req?.user?._id ? String(req.user._id) : "",
+    permissionCount: requestedPermissions.length,
+    permissionKeys: requestedPermissions
+      .map((item) => normalizeText(item?.key || item?.permissionKey))
+      .filter(Boolean)
+      .slice(0, 12),
     templateKeys,
-    branchIds,
-    targetUserId: String(user._id),
+    branchIdCount: branchIds.length,
+    permissionMode: user?.permissionMode || "",
+    reason,
   });
 
+  const { assignments, errors } = await normalizeRequestedPermissionAssignments(
+    {
+      permissions: Array.isArray(payload.permissions)
+        ? payload.permissions
+        : [],
+      templateKeys,
+      branchIds,
+      targetUserId: String(user._id),
+    },
+  );
+
   if (errors.length) {
-    throw toAppError(400, "AUTHZ_PERMISSION_PAYLOAD_INVALID", "Permission payload is invalid", {
-      errors,
+    omniLog.warn("authz.permissionSync.invalidPayload", {
+      targetUserId: String(user?._id || ""),
+      errorCount: errors.length,
+      errors: errors.slice(0, 6),
+      templateKeys,
+      branchIdCount: branchIds.length,
+    });
+    throw toAppError(
+      400,
+      "AUTHZ_PERMISSION_PAYLOAD_INVALID",
+      "Permission payload is invalid",
+      {
+        errors,
+      },
+    );
+  }
+
+  if (
+    !assignments.length &&
+    (requestedPermissions.length > 0 || templateKeys.length > 0)
+  ) {
+    omniLog.warn("authz.permissionSync.emptyAssignments", {
+      targetUserId: String(user?._id || ""),
+      permissionCount: requestedPermissions.length,
+      templateKeys,
+      branchIdCount: branchIds.length,
     });
   }
 
@@ -160,11 +276,17 @@ const syncExplicitPermissionsForUser = async ({ req, user, payload, reason = "" 
   });
 
   if (!antiEscalation.allowed) {
+    omniLog.warn("authz.permissionSync.antiEscalationBlocked", {
+      targetUserId: String(user?._id || ""),
+      violationCount: antiEscalation.violations?.length || 0,
+      violations: (antiEscalation.violations || []).slice(0, 6),
+      templateKeys,
+    });
     throw toAppError(
       403,
       "AUTHZ_PERMISSION_ESCALATION_BLOCKED",
       "Permission grant violates anti-escalation rules",
-      { violations: antiEscalation.violations }
+      { violations: antiEscalation.violations },
     );
   }
 
@@ -176,7 +298,9 @@ const syncExplicitPermissionsForUser = async ({ req, user, payload, reason = "" 
     reason: reason || "user_permission_sync",
   });
 
-  const previousPermissionMode = String(user.permissionMode || "ROLE_FALLBACK").toUpperCase();
+  const previousPermissionMode = String(
+    user.permissionMode || "ROLE_FALLBACK",
+  ).toUpperCase();
   const modeChanged = previousPermissionMode !== "EXPLICIT";
   if (modeChanged) {
     user.permissionMode = "EXPLICIT";
@@ -187,6 +311,15 @@ const syncExplicitPermissionsForUser = async ({ req, user, payload, reason = "" 
     await user.save();
   }
 
+  omniLog.debug("authz.permissionSync.result", {
+    targetUserId: String(user?._id || ""),
+    grantedCount: result.grantedCount || 0,
+    revokedCount: result.revokedCount || 0,
+    assignmentCount: assignments.length,
+    permissionMode: user?.permissionMode || "",
+    reason,
+  });
+
   return {
     ...result,
     assignments,
@@ -196,7 +329,83 @@ const syncExplicitPermissionsForUser = async ({ req, user, payload, reason = "" 
 };
 
 const roleRequiresStoreLocation = (role) =>
-  BRANCH_REQUIRED_EMPLOYEE_ROLES.has(String(role || "").trim().toUpperCase());
+  BRANCH_REQUIRED_EMPLOYEE_ROLES.has(
+    String(role || "")
+      .trim()
+      .toUpperCase(),
+  );
+
+const normalizeRoleArray = (roles = []) =>
+  toUniqueStrings(
+    (Array.isArray(roles) ? roles : []).map((role) =>
+      normalizeText(role).toUpperCase(),
+    ),
+  );
+
+const normalizeBranchRoles = (roles = []) => {
+  const output = new Set();
+  for (const role of normalizeRoleArray(roles)) {
+    if (!role) continue;
+    const effectiveRole = LEGACY_ROLE_TO_CANONICAL_BRANCH_ROLE[role] || role;
+    if (BRANCH_ROLES.includes(role) || BRANCH_ROLES.includes(effectiveRole)) {
+      output.add(effectiveRole);
+    }
+  }
+  return Array.from(output);
+};
+
+const normalizeBranchAssignmentsPayload = (assignments = []) => {
+  const normalized = [];
+  for (const assignment of Array.isArray(assignments) ? assignments : []) {
+    const storeId = normalizeText(assignment?.storeId);
+    const roles = normalizeBranchRoles(assignment?.roles || []);
+    if (!storeId || roles.length === 0) continue;
+
+    normalized.push({
+      storeId,
+      roles,
+      status: assignment?.status || "ACTIVE",
+      isPrimary: Boolean(assignment?.isPrimary),
+    });
+  }
+
+  if (normalized.length > 0 && !normalized.some((item) => item.isPrimary)) {
+    normalized[0].isPrimary = true;
+  }
+
+  let primaryFound = false;
+  for (const item of normalized) {
+    if (item.isPrimary && !primaryFound) {
+      primaryFound = true;
+      continue;
+    }
+    if (primaryFound) {
+      item.isPrimary = false;
+    }
+  }
+
+  return normalized;
+};
+
+const deriveLegacyRoleFromAssignments = ({
+  systemRoles = [],
+  taskRoles = [],
+  branchAssignments = [],
+  fallbackRole = "USER",
+} = {}) => {
+  if (systemRoles.includes("GLOBAL_ADMIN")) return "GLOBAL_ADMIN";
+  if (taskRoles.includes("SHIPPER")) return "SHIPPER";
+
+  if (branchAssignments.length > 0) {
+    const primary =
+      branchAssignments.find((assignment) => assignment.isPrimary) ||
+      branchAssignments[0];
+    const role = primary?.roles?.[0] || fallbackRole;
+    return CANONICAL_BRANCH_ROLE_TO_LEGACY_ROLE[role] || role;
+  }
+
+  return fallbackRole || "USER";
+};
 
 const resolveHoChiMinhStoreId = async () => {
   const hcmRegex = /ho\s*chi\s*minh|tp\.?\s*hcm|sai\s*gon|^hcm$/i;
@@ -244,7 +453,7 @@ export const updateProfile = async (req, res) => {
     const user = await User.findByIdAndUpdate(
       req.user._id,
       { fullName, email, province },
-      { new: true, runValidators: true }
+      { new: true, runValidators: true },
     );
 
     res.json({
@@ -349,6 +558,7 @@ export const getAllEmployees = async (req, res) => {
     const filter = {
       role: {
         $in: [
+          "SALES_STAFF",
           "WAREHOUSE_MANAGER",
           "PRODUCT_MANAGER",
           "ORDER_MANAGER",
@@ -384,9 +594,17 @@ export const getAllEmployees = async (req, res) => {
       if (req.authz?.activeBranchId) {
         filter.storeLocation = req.authz.activeBranchId;
       } else {
-         return res.json({
+        return res.json({
           success: true,
-          data: { employees: [], pagination: { currentPage: 1, totalPages: 0, total: 0, limit: limitNum } },
+          data: {
+            employees: [],
+            pagination: {
+              currentPage: 1,
+              totalPages: 0,
+              total: 0,
+              limit: limitNum,
+            },
+          },
         });
       }
     } else {
@@ -431,18 +649,37 @@ export const getAllEmployees = async (req, res) => {
 // Táº¡o nhÃ¢n viÃªn má»›i
 export const createEmployee = async (req, res) => {
   try {
-    const { fullName, phoneNumber, email, province, password, role, avatar, storeLocation } =
-      req.body;
-    const legacyRole = String(role || "USER").trim().toUpperCase();
-    assertActorCanAssignRole(req, legacyRole);
+    const {
+      fullName,
+      phoneNumber,
+      email,
+      province,
+      password,
+      role,
+      avatar,
+      storeLocation,
+    } = req.body;
+    const canonicalRoleRequested = hasCanonicalRolePayload(req.body);
     const requestedBranchIds = collectBranchIds(req.body);
+    const fallbackRequestedRole =
+      (Array.isArray(req.body?.roleKeys) && req.body.roleKeys[0]) || role || "USER";
+    const legacyRole = String(fallbackRequestedRole || "USER")
+      .trim()
+      .toUpperCase();
+    if (!canonicalRoleRequested) {
+      assertActorCanAssignRole(req, legacyRole);
+    }
     assertActorBranchScope(req, requestedBranchIds);
     const granularRequested = hasGranularPermissionPayload(req.body);
+    const requestedPrimaryBranchId =
+      normalizeText(req.body?.primaryBranchId) ||
+      normalizeText(storeLocation) ||
+      requestedBranchIds[0] ||
+      "";
 
-    const primaryBranchId = normalizeText(storeLocation) || requestedBranchIds[0] || "";
     const effectiveStoreLocation = await resolveEmployeeStoreLocation({
       role: legacyRole,
-      storeLocation: primaryBranchId,
+      storeLocation: requestedPrimaryBranchId,
     });
     const authzWrite = deriveAuthzWriteFromLegacyInput({
       role: legacyRole,
@@ -469,18 +706,48 @@ export const createEmployee = async (req, res) => {
       province,
       password,
       role: legacyRole,
+      roles: [],
+      permissions: [],
       avatar: avatar || "",
-      systemRoles: authzWrite.systemRoles,
-      taskRoles: authzWrite.taskRoles,
-      branchAssignments,
-      authzState: authzWrite.authzState,
+      systemRoles: canonicalRoleRequested ? [] : authzWrite.systemRoles,
+      taskRoles: canonicalRoleRequested ? [] : authzWrite.taskRoles,
+      branchAssignments: canonicalRoleRequested ? [] : branchAssignments,
+      authzState: canonicalRoleRequested ? "ACTIVE" : authzWrite.authzState,
       authzVersion: 2,
       permissionsVersion: 1,
-      permissionMode: granularRequested ? "EXPLICIT" : "ROLE_FALLBACK",
+      authorizationVersion: 1,
+      permissionMode: "HYBRID",
       storeLocation: effectiveStoreLocation,
     });
 
     let permissionSync = null;
+    let roleSync = null;
+    const roleAssignmentPayload = canonicalRoleRequested
+      ? {
+          ...req.body,
+          storeLocation: effectiveStoreLocation,
+          primaryBranchId: requestedPrimaryBranchId || effectiveStoreLocation,
+        }
+      : {
+          roleKeys: [legacyRole],
+          branchIds: requestedBranchIds,
+          storeLocation: effectiveStoreLocation,
+          primaryBranchId: requestedPrimaryBranchId || effectiveStoreLocation,
+        };
+
+    try {
+      roleSync = await syncUserRoleAssignments({
+        user,
+        assignments: await resolveCanonicalRoleAssignmentsFromPayload(req, roleAssignmentPayload),
+        actorUserId: req.user?._id || null,
+        primaryBranchId: requestedPrimaryBranchId || effectiveStoreLocation,
+        reason: "user_create",
+      });
+    } catch (error) {
+      await User.findByIdAndDelete(user._id);
+      throw error;
+    }
+
     if (granularRequested) {
       try {
         permissionSync = await syncExplicitPermissionsForUser({
@@ -500,6 +767,13 @@ export const createEmployee = async (req, res) => {
       message: "Tao nhan vien thanh cong",
       data: {
         user,
+        roleSync: roleSync
+          ? {
+              grantedCount: roleSync.grantedCount,
+              revokedCount: roleSync.revokedCount,
+              roleKeys: roleSync.roleKeys,
+            }
+          : null,
         permissionSync: permissionSync
           ? {
               grantedCount: permissionSync.grantedCount,
@@ -605,8 +879,16 @@ export const updateEmployeeAvatar = async (req, res) => {
 
 export const updateEmployee = async (req, res) => {
   try {
-    const { fullName, phoneNumber, email, province, password, role, avatar, storeLocation } =
-      req.body;
+    const {
+      fullName,
+      phoneNumber,
+      email,
+      province,
+      password,
+      role,
+      avatar,
+      storeLocation,
+    } = req.body;
 
     const user = await User.findById(req.params.id);
     if (!user) {
@@ -620,12 +902,19 @@ export const updateEmployee = async (req, res) => {
     assertActorCanManageTargetUser(req, user);
     const requestedBranchIds = collectBranchIds(req.body);
     assertActorBranchScope(req, requestedBranchIds);
+    const canonicalRoleRequested = hasCanonicalRolePayload(req.body);
 
     const nextRole = role ? String(role).trim().toUpperCase() : user.role;
-    assertActorCanAssignRole(req, nextRole);
+    if (!canonicalRoleRequested) {
+      assertActorCanAssignRole(req, nextRole);
+    }
     const requestedStoreLocation =
       storeLocation !== undefined ? storeLocation : user.storeLocation;
-    const primaryBranchId = normalizeText(requestedStoreLocation) || requestedBranchIds[0] || "";
+    const primaryBranchId =
+      normalizeText(req.body?.primaryBranchId) ||
+      normalizeText(requestedStoreLocation) ||
+      requestedBranchIds[0] ||
+      "";
 
     const nextStoreLocation = await resolveEmployeeStoreLocation({
       role: nextRole,
@@ -653,7 +942,8 @@ export const updateEmployee = async (req, res) => {
     const roleOrScopeChanged =
       String(user.role || "") !== String(nextRole || "") ||
       String(user.storeLocation || "") !== String(nextStoreLocation || "") ||
-      JSON.stringify(user.branchAssignments || []) !== JSON.stringify(nextBranchAssignments || []);
+      JSON.stringify(user.branchAssignments || []) !==
+        JSON.stringify(nextBranchAssignments || []);
 
     user.fullName = fullName || user.fullName;
     user.phoneNumber = phoneNumber || user.phoneNumber;
@@ -662,10 +952,10 @@ export const updateEmployee = async (req, res) => {
     user.role = nextRole;
     user.avatar = avatar !== undefined ? avatar : user.avatar;
     user.storeLocation = nextStoreLocation;
-    user.systemRoles = authzWrite.systemRoles;
-    user.taskRoles = authzWrite.taskRoles;
-    user.branchAssignments = nextBranchAssignments;
-    user.authzState = authzWrite.authzState;
+    user.systemRoles = canonicalRoleRequested ? user.systemRoles : authzWrite.systemRoles;
+    user.taskRoles = canonicalRoleRequested ? user.taskRoles : authzWrite.taskRoles;
+    user.branchAssignments = canonicalRoleRequested ? user.branchAssignments : nextBranchAssignments;
+    user.authzState = canonicalRoleRequested ? "ACTIVE" : authzWrite.authzState;
     user.authzVersion = 2;
 
     if (roleOrScopeChanged) {
@@ -679,6 +969,28 @@ export const updateEmployee = async (req, res) => {
     await user.save();
 
     let permissionSync = null;
+    let roleSync = null;
+    const roleAssignmentPayload = canonicalRoleRequested
+      ? {
+          ...req.body,
+          storeLocation: primaryBranchId || nextStoreLocation,
+          primaryBranchId: primaryBranchId || nextStoreLocation,
+        }
+      : {
+          roleKeys: [nextRole],
+          branchIds: requestedBranchIds,
+          storeLocation: primaryBranchId || nextStoreLocation,
+          primaryBranchId: primaryBranchId || nextStoreLocation,
+        };
+
+    roleSync = await syncUserRoleAssignments({
+      user,
+      assignments: await resolveCanonicalRoleAssignmentsFromPayload(req, roleAssignmentPayload),
+      actorUserId: req.user?._id || null,
+      primaryBranchId: primaryBranchId || nextStoreLocation,
+      reason: "user_update",
+    });
+
     if (hasGranularPermissionPayload(req.body)) {
       permissionSync = await syncExplicitPermissionsForUser({
         req,
@@ -693,6 +1005,13 @@ export const updateEmployee = async (req, res) => {
       message: "Cap nhat nhan vien thanh cong",
       data: {
         user,
+        roleSync: roleSync
+          ? {
+              grantedCount: roleSync.grantedCount,
+              revokedCount: roleSync.revokedCount,
+              roleKeys: roleSync.roleKeys,
+            }
+          : null,
         permissionSync: permissionSync
           ? {
               grantedCount: permissionSync.grantedCount,
@@ -711,6 +1030,99 @@ export const updateEmployee = async (req, res) => {
     });
   }
 };
+
+export const updateUserRoles = async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        code: "USER_NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    assertActorCanManageTargetUser(req, targetUser);
+    const branchAssignments = normalizeBranchAssignmentsPayload(
+      req.body?.branchAssignments || [],
+    );
+    const fallbackAssignments = [
+      ...normalizeRoleArray(req.body?.systemRoles)
+        .filter((role) => SYSTEM_ROLES.includes(role))
+        .map((roleKey) => ({ roleKey, scopeType: "GLOBAL", scopeRef: "" })),
+      ...normalizeRoleArray(req.body?.taskRoles)
+        .filter((role) => TASK_ROLES.includes(role))
+        .map((roleKey) => ({ roleKey, scopeType: "TASK", scopeRef: "" })),
+      ...branchAssignments.flatMap((assignment) =>
+        normalizeBranchRoles(assignment?.roles || []).map((roleKey) => ({
+          roleKey,
+          scopeType: "BRANCH",
+          scopeRef: normalizeText(assignment.storeId),
+          metadata: {
+            isPrimary: Boolean(assignment?.isPrimary),
+          },
+        })),
+      ),
+    ];
+
+    const requestedAssignments = hasCanonicalRolePayload(req.body)
+      ? await resolveCanonicalRoleAssignmentsFromPayload(req, req.body)
+      : await resolveCanonicalRoleAssignmentsFromPayload(req, {
+          roleAssignments: fallbackAssignments,
+          primaryBranchId:
+            normalizeText(req.body?.primaryBranchId) ||
+            normalizeText(req.body?.storeLocation) ||
+            normalizeText(branchAssignments.find((assignment) => assignment.isPrimary)?.storeId) ||
+            normalizeText(branchAssignments[0]?.storeId) ||
+            normalizeText(targetUser.storeLocation),
+        });
+
+    const primaryBranchId =
+      normalizeText(req.body?.primaryBranchId) ||
+      normalizeText(req.body?.storeLocation) ||
+      requestedAssignments.find((assignment) => assignment.scopeType === "BRANCH")?.scopeRef ||
+      normalizeText(targetUser.storeLocation);
+
+    await syncUserRoleAssignments({
+      user: targetUser,
+      assignments: requestedAssignments,
+      actorUserId: req.user?._id || null,
+      primaryBranchId,
+      reason: "user_role_update",
+    });
+
+    const effective = await resolveEffectiveAccessContext({
+      user: targetUser,
+      activeBranchId: targetUser.storeLocation || "",
+    });
+
+    return res.json({
+      success: true,
+      message: "User roles updated",
+      data: {
+        user: targetUser,
+        authz: {
+          permissionMode: effective.permissionMode || "HYBRID",
+          activeBranchId: effective.activeBranchId || "",
+          allowedBranchIds: effective.allowedBranchIds || [],
+          roleKeys: effective.roleKeys || [],
+          roleAssignments: effective.roleAssignments || [],
+          permissions: Array.from(effective.permissions || []).sort(),
+          permissionGrants: Array.isArray(effective.permissionGrants)
+            ? effective.permissionGrants
+            : [],
+        },
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      success: false,
+      code: error.code || "USER_ROLE_UPDATE_FAILED",
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    });
+  }
+};
 export const getAllShippers = async (req, res) => {
   try {
     const filter = {
@@ -718,7 +1130,7 @@ export const getAllShippers = async (req, res) => {
       status: "ACTIVE",
     };
 
-    const isGlobalAdmin = Boolean(req.authz?.isGlobalAdmin || req.user?.role === "GLOBAL_ADMIN");
+    const isGlobalAdmin = Boolean(req.authz?.isGlobalAdmin);
 
     if (!isGlobalAdmin) {
       const activeBranchId = String(req.authz?.activeBranchId || "").trim();
@@ -761,7 +1173,8 @@ export const getAllShippers = async (req, res) => {
   }
 };
 
-export const createUserWithPermissions = async (req, res) => createEmployee(req, res);
+export const createUserWithPermissions = async (req, res) =>
+  createEmployee(req, res);
 
 export const getPermissionsCatalogController = async (req, res) => {
   try {
@@ -839,9 +1252,13 @@ export const getEffectivePermissionsForUser = async (req, res) => {
       success: true,
       data: {
         userId: String(targetUser._id),
-        permissionMode: effective.permissionMode || "ROLE_FALLBACK",
+        permissionMode: effective.permissionMode || "HYBRID",
         activeBranchId: effective.activeBranchId || "",
         allowedBranchIds: effective.allowedBranchIds || [],
+        roleKeys: effective.roleKeys || [],
+        roleAssignments: Array.isArray(effective.roleAssignments)
+          ? effective.roleAssignments
+          : [],
         permissions: Array.from(effective.permissions || []).sort(),
         permissionGrants: Array.isArray(effective.permissionGrants)
           ? effective.permissionGrants
@@ -857,6 +1274,101 @@ export const getEffectivePermissionsForUser = async (req, res) => {
     });
   }
 };
+
+export const getUserAuthorization = async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        code: "USER_NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    assertActorCanManageTargetUser(req, targetUser);
+
+    const queryBranchId = normalizeText(req.query?.activeBranchId);
+    const effective = await resolveEffectiveAccessContext({
+      user: targetUser,
+      activeBranchId: queryBranchId || targetUser.storeLocation || "",
+    });
+    const directPermissionGrants = await loadActiveUserPermissionGrants({
+      userId: targetUser._id,
+      permissionsVersion: targetUser.permissionsVersion,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        userId: String(targetUser._id),
+        role: targetUser.role,
+        roles: Array.isArray(targetUser.roles) ? targetUser.roles.map(String) : [],
+        roleKeys: effective.roleKeys || [],
+        roleAssignments: Array.isArray(effective.roleAssignments)
+          ? effective.roleAssignments
+          : [],
+        directPermissions: Array.isArray(targetUser.permissions)
+          ? targetUser.permissions
+          : [],
+        directPermissionGrants,
+        permissionMode: effective.permissionMode || "HYBRID",
+        activeBranchId: effective.activeBranchId || "",
+        allowedBranchIds: effective.allowedBranchIds || [],
+        permissions: Array.from(effective.permissions || []).sort(),
+        permissionGrants: Array.isArray(effective.permissionGrants)
+          ? effective.permissionGrants
+          : [],
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      success: false,
+      code: error.code || "USER_AUTHORIZATION_LOAD_FAILED",
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    });
+  }
+};
+
+export const getUserRoleAssignments = async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        code: "USER_NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    assertActorCanManageTargetUser(req, targetUser);
+    const effective = await resolveEffectiveAccessContext({
+      user: targetUser,
+      activeBranchId: targetUser.storeLocation || "",
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        userId: String(targetUser._id),
+        roleKeys: effective.roleKeys || [],
+        roleAssignments: Array.isArray(effective.roleAssignments)
+          ? effective.roleAssignments
+          : [],
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      success: false,
+      code: error.code || "USER_ROLE_ASSIGNMENTS_LOAD_FAILED",
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    });
+  }
+};
+
+export const updateUserRoleAssignments = async (req, res) => updateUserRoles(req, res);
 
 export const updateUserPermissions = async (req, res) => {
   try {
@@ -884,13 +1396,15 @@ export const updateUserPermissions = async (req, res) => {
 
       if (roleBasedAuthz.branchAssignments.length === 1) {
         const assignmentRoles = roleBasedAuthz.branchAssignments[0].roles || [];
-        targetUser.branchAssignments = requestedBranchIds.map((branchId, index) => ({
-          storeId: branchId,
-          roles: assignmentRoles,
-          status: "ACTIVE",
-          isPrimary: index === 0,
-          assignedBy: req.user?._id || undefined,
-        }));
+        targetUser.branchAssignments = requestedBranchIds.map(
+          (branchId, index) => ({
+            storeId: branchId,
+            roles: assignmentRoles,
+            status: "ACTIVE",
+            isPrimary: index === 0,
+            assignedBy: req.user?._id || undefined,
+          }),
+        );
         targetUser.storeLocation = requestedBranchIds[0];
         branchScopeChanged = true;
       } else if (targetUser.storeLocation !== requestedBranchIds[0]) {
@@ -900,7 +1414,8 @@ export const updateUserPermissions = async (req, res) => {
     }
 
     if (branchScopeChanged) {
-      targetUser.permissionsVersion = Number(targetUser.permissionsVersion || 1) + 1;
+      targetUser.permissionsVersion =
+        Number(targetUser.permissionsVersion || 1) + 1;
       await targetUser.save();
     }
 
@@ -933,19 +1448,64 @@ export const updateUserPermissions = async (req, res) => {
   }
 };
 
+export const getUserPermissionGrants = async (req, res) => {
+  try {
+    const targetUser = await User.findById(req.params.id);
+    if (!targetUser) {
+      return res.status(404).json({
+        success: false,
+        code: "USER_NOT_FOUND",
+        message: "User not found",
+      });
+    }
+
+    assertActorCanManageTargetUser(req, targetUser);
+
+    const directPermissionGrants = await loadActiveUserPermissionGrants({
+      userId: targetUser._id,
+      permissionsVersion: targetUser.permissionsVersion,
+    });
+
+    return res.json({
+      success: true,
+      data: {
+        userId: String(targetUser._id),
+        directPermissions: Array.isArray(targetUser.permissions)
+          ? targetUser.permissions
+          : [],
+        permissionGrants: directPermissionGrants,
+      },
+    });
+  } catch (error) {
+    return res.status(error.status || 400).json({
+      success: false,
+      code: error.code || "USER_PERMISSION_GRANTS_LOAD_FAILED",
+      message: error.message,
+      ...(error.details ? { details: error.details } : {}),
+    });
+  }
+};
+
+export const updateUserPermissionGrants = async (req, res) => updateUserPermissions(req, res);
+
 export const previewPermissionAssignments = async (req, res) => {
   try {
-    const targetUserId = normalizeText(req.body?.targetUserId || req.params?.id || req.user?._id);
+    const targetUserId = normalizeText(
+      req.body?.targetUserId || req.params?.id || req.user?._id,
+    );
     const branchIds = collectBranchIds(req.body);
 
     assertActorBranchScope(req, branchIds);
 
-    const { assignments, errors } = await normalizeRequestedPermissionAssignments({
-      permissions: Array.isArray(req.body?.permissions) ? req.body.permissions : [],
-      templateKeys: collectTemplateKeys(req.body),
-      branchIds,
-      targetUserId,
-    });
+    const { assignments, errors } =
+      await normalizeRequestedPermissionAssignments({
+        permissions: Array.isArray(req.body?.permissions)
+          ? req.body.permissions
+          : [],
+        templateKeys: collectTemplateKeys(req.body),
+        branchIds,
+        targetUserId,
+      });
 
     if (errors.length) {
       return res.status(400).json({

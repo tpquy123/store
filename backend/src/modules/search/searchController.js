@@ -1,6 +1,10 @@
 import mongoose from "mongoose";
 import UniversalProduct from "../product/UniversalProduct.js";
 import ProductType from "../productType/ProductType.js";
+import {
+  decorateProductForCommerce,
+  PUBLIC_PRODUCT_STATUSES,
+} from "../product/productPricingService.js";
 
 const SYNONYM_MAP = {
   laptop: ["macbook", "mac", "may tinh xach tay"],
@@ -272,7 +276,9 @@ export const search = async (req, res) => {
     const attributes = extractAttributes(correctedQuery);
     const expandedQueries = expandSynonyms(correctedQuery);
     const searchTerms = expandedQueries.join(" ");
-    const baseQuery = {};
+    const baseQuery = {
+      status: { $in: PUBLIC_PRODUCT_STATUSES },
+    };
 
     if (category) {
       const productTypeIds = await resolveProductTypeIds(category);
@@ -322,11 +328,14 @@ export const search = async (req, res) => {
     }
 
     const ranked = products
-      .map((product) => ({
-        ...product,
-        _category: getCategoryRoute(product.productType),
-        _relevance: calculateRelevance(product, correctedQuery, attributes),
-      }))
+      .map((product) => {
+        const commerceProduct = decorateProductForCommerce(product);
+        return {
+          ...commerceProduct,
+          _category: getCategoryRoute(commerceProduct.productType),
+          _relevance: calculateRelevance(commerceProduct, correctedQuery, attributes),
+        };
+      })
       .sort((a, b) => b._relevance - a._relevance);
 
     return res.json({
@@ -363,7 +372,9 @@ export const autocomplete = async (req, res) => {
 
     const correctedQuery = correctTypos(q);
     const normalized = normalizeVietnamese(correctedQuery);
-    const baseQuery = {};
+    const baseQuery = {
+      status: { $in: PUBLIC_PRODUCT_STATUSES },
+    };
 
     if (category) {
       const productTypeIds = await resolveProductTypeIds(category);

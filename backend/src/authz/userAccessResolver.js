@@ -21,7 +21,7 @@ const normalizeBranchRoles = (roles = []) => {
   for (const role of roles) {
     if (!role) continue;
     if (isBranchRole(role)) {
-      output.add(role === "ADMIN" ? "BRANCH_ADMIN" : role);
+      output.add(LEGACY_TO_BRANCH_ROLE[role] || role);
       continue;
     }
     if (LEGACY_TO_BRANCH_ROLE[role]) {
@@ -65,26 +65,27 @@ const dedupeBranchAssignments = (assignments = []) => {
 export const deriveAuthzWriteFromLegacyInput = ({ role, storeLocation, assignedBy } = {}) => {
   const normalizedRole = String(role || "").trim().toUpperCase();
   const storeId = toStringId(storeLocation);
+  const branchRoleKey = LEGACY_TO_BRANCH_ROLE[normalizedRole] || "";
 
   const systemRoles = [];
   const taskRoles = [];
   const branchAssignments = [];
   let authzState = "ACTIVE";
 
-  if (normalizedRole === "GLOBAL_ADMIN") {
+  if (SYSTEM_ROLES.includes(normalizedRole)) {
     systemRoles.push("GLOBAL_ADMIN");
-  } else if (normalizedRole === "SHIPPER") {
+  } else if (TASK_ROLES.includes(normalizedRole)) {
     taskRoles.push("SHIPPER");
-  } else if (LEGACY_TO_BRANCH_ROLE[normalizedRole]) {
+  } else if (branchRoleKey) {
     if (storeId) {
       branchAssignments.push({
         storeId,
-        roles: [LEGACY_TO_BRANCH_ROLE[normalizedRole]],
+        roles: [branchRoleKey],
         status: "ACTIVE",
         isPrimary: true,
         assignedBy: assignedBy || undefined,
       });
-    } else if (normalizedRole === "ADMIN") {
+    } else if (branchRoleKey === "BRANCH_ADMIN") {
       authzState = "REVIEW_REQUIRED";
     }
   }
@@ -111,49 +112,28 @@ export const normalizeUserAccess = (user) => {
     ? safeUser.branchAssignments
     : [];
 
-  const hasV2Fields =
-    rawSystemRoles.length > 0 || rawTaskRoles.length > 0 || rawAssignments.length > 0;
-
-  let systemRoles = rawSystemRoles.filter(isSystemRole);
-  let taskRoles = rawTaskRoles.filter(isTaskRole);
-  let branchAssignments = dedupeBranchAssignments(rawAssignments);
-  let authzState = safeUser.authzState || "ACTIVE";
-
-  if (!hasV2Fields) {
-    const fallback = deriveAuthzWriteFromLegacyInput({
-      role,
-      storeLocation: safeUser.storeLocation,
-    });
-    systemRoles = fallback.systemRoles;
-    taskRoles = fallback.taskRoles;
-    branchAssignments = dedupeBranchAssignments(fallback.branchAssignments);
-    authzState = fallback.authzState;
-  }
+  const systemRoles = rawSystemRoles.filter(isSystemRole);
+  const taskRoles = rawTaskRoles.filter(isTaskRole);
+  const branchAssignments = dedupeBranchAssignments(rawAssignments);
+  const authzState = safeUser.authzState || "ACTIVE";
+  const activeBranchAssignments = branchAssignments.filter(
+    (assignment) => String(assignment?.status || "ACTIVE").trim().toUpperCase() === "ACTIVE"
+  );
 
   const defaultBranchId = toStringId(safeUser?.preferences?.defaultBranchId);
-  const allowedBranchIds = branchAssignments
-    .filter((assignment) => assignment.status === "ACTIVE")
+  const allowedBranchIds = activeBranchAssignments
     .map((assignment) => toStringId(assignment.storeId))
     .filter(Boolean);
 
-  const primaryAssignment = branchAssignments.find((assignment) => assignment.isPrimary);
+  const primaryAssignment =
+    activeBranchAssignments.find((assignment) => assignment.isPrimary) ||
+    activeBranchAssignments[0];
   const primaryBranchId = toStringId(primaryAssignment?.storeId);
-
-  const requiresBranchAssignment =
-    branchAssignments.length > 0 ||
-    role === "ADMIN" ||
-    role === "WAREHOUSE_MANAGER" ||
-    role === "WAREHOUSE_STAFF" ||
-    role === "ORDER_MANAGER" ||
-    role === "PRODUCT_MANAGER" ||
-    role === "POS_STAFF" ||
-    role === "CASHIER";
-
-  const isGlobalAdmin = systemRoles.includes("GLOBAL_ADMIN") || role === "GLOBAL_ADMIN";
-  const permissionMode =
-    String(safeUser.permissionMode || "").trim().toUpperCase() === "EXPLICIT"
-      ? "EXPLICIT"
-      : "ROLE_FALLBACK";
+  const preferredBranchId =
+    defaultBranchId && allowedBranchIds.includes(defaultBranchId) ? defaultBranchId : "";
+  const requiresBranchAssignment = branchAssignments.length > 0;
+  const isGlobalAdmin = systemRoles.includes("GLOBAL_ADMIN");
+  const permissionMode = "HYBRID";
 
   return {
     userId: toStringId(safeUser._id),
@@ -165,7 +145,7 @@ export const normalizeUserAccess = (user) => {
     taskRoles: Array.from(new Set(taskRoles)),
     branchAssignments,
     allowedBranchIds: Array.from(new Set(allowedBranchIds)),
-    defaultBranchId: defaultBranchId || primaryBranchId || "",
+    defaultBranchId: preferredBranchId || primaryBranchId || "",
     isGlobalAdmin,
     requiresBranchAssignment,
     permissionMode,

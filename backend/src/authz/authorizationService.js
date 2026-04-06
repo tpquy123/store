@@ -10,6 +10,12 @@ import {
   loadActiveUserPermissionGrants,
 } from "./userPermissionService.js";
 import { getOrLoadEffectiveContext } from "./effectivePermissionCache.js";
+import { loadRolePermissionMap } from "./rolePermissionService.js";
+import {
+  buildLegacyAuthzMirror,
+  resolveUserRoleAssignments,
+} from "./roleAssignmentService.js";
+import User from "../modules/auth/User.js";
 
 const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
 const normalizeScopeId = (value) => String(value || "").trim();
@@ -36,27 +42,31 @@ const dedupePermissionGrants = (grants = []) => {
   return Array.from(byKey.values());
 };
 
-const selectBaseGrants = ({
-  explicitGrants = [],
-  roleGrants = [],
-  preferredPermissionMode = "ROLE_FALLBACK",
-}) => {
-  const hasExplicit = explicitGrants.length > 0;
-  const explicitRequested = String(preferredPermissionMode || "").trim().toUpperCase() === "EXPLICIT";
-
-  if (!hasExplicit && !explicitRequested) {
-    return {
-      permissionMode: "ROLE_FALLBACK",
-      grants: roleGrants,
-    };
+const mergeCanonicalAssignments = ({ normalized, assignments = [], activeBranchId = "" }) => {
+  if (!assignments.length) {
+    return normalized;
   }
 
-  // Keep system-level role grants (GLOBAL_ADMIN wildcard) while explicit grants
-  // are active, but drop branch/task role grants to avoid role hard-limits.
-  const systemRoleGrants = roleGrants.filter((grant) => grant?.sourceType === "SYSTEM");
+  const mirror = buildLegacyAuthzMirror({
+    assignments,
+    fallbackRole: normalized.role || "USER",
+    primaryBranchId: activeBranchId || normalized.defaultBranchId || "",
+  });
+
   return {
-    permissionMode: "EXPLICIT",
-    grants: [...explicitGrants, ...systemRoleGrants],
+    ...normalized,
+    role: mirror.legacyRole || normalized.role,
+    roles: mirror.roles?.length ? mirror.roles : normalized.roles || [],
+    roleKeys: mirror.roleKeys || [],
+    systemRoles: mirror.systemRoles || normalized.systemRoles || [],
+    taskRoles: mirror.taskRoles || normalized.taskRoles || [],
+    branchAssignments: mirror.branchAssignments || normalized.branchAssignments || [],
+    allowedBranchIds:
+      mirror.branchAssignments?.map((assignment) => normalizeScopeId(assignment.storeId)) ||
+      normalized.allowedBranchIds ||
+      [],
+    defaultBranchId:
+      mirror.primaryBranchId || activeBranchId || normalized.defaultBranchId || "",
   };
 };
 
@@ -72,41 +82,72 @@ export const resolveEffectiveAccessContext = async ({
 
   const cacheKey = `${userId}:${permissionsVersion}:${effectiveActiveBranchId || "_"}:effective`;
   return getOrLoadEffectiveContext(cacheKey, async () => {
+    const roleAssignments = await resolveUserRoleAssignments({ user });
+    const normalizedWithAssignments = mergeCanonicalAssignments({
+      normalized,
+      assignments: roleAssignments,
+      activeBranchId: effectiveActiveBranchId,
+    });
+    const rolePermissionMap = await loadRolePermissionMap();
     const explicitGrants = await loadActiveUserPermissionGrants({
-      userId: normalized.userId,
-      permissionsVersion: normalized.permissionsVersion,
+      userId: normalizedWithAssignments.userId,
+      permissionsVersion: normalizedWithAssignments.permissionsVersion,
     });
 
     const roleGrants = buildRolePermissionGrants({
-      ...normalized,
+      ...normalizedWithAssignments,
       activeBranchId: effectiveActiveBranchId,
-    });
+    }, { rolePermissionMap });
 
-    const selected = selectBaseGrants({
-      explicitGrants,
-      roleGrants,
-      preferredPermissionMode: normalized.permissionMode,
-    });
-    const permissionGrants = dedupePermissionGrants(selected.grants);
+    const permissionGrants = dedupePermissionGrants([...roleGrants, ...explicitGrants]);
 
     const explicitBranchIds = collectBranchScopeIdsFromGrants(permissionGrants);
     const allowedBranchIds = toUniqueStrings([
-      ...(normalized.allowedBranchIds || []),
+      ...(normalizedWithAssignments.allowedBranchIds || []),
       ...explicitBranchIds,
     ]);
 
     const authzSnapshot = {
-      ...normalized,
+      ...normalizedWithAssignments,
       activeBranchId: effectiveActiveBranchId,
       allowedBranchIds,
-      permissionMode: selected.permissionMode,
+      permissionMode: "HYBRID",
       permissionGrants,
+      rolePermissionMap,
+      roleAssignments,
+      roleKeys: normalizedWithAssignments.roleKeys || [],
     };
     authzSnapshot.permissions = buildPermissionSet(authzSnapshot);
     authzSnapshot.permissionGrantMap = buildPermissionGrantMap(permissionGrants);
 
     return authzSnapshot;
   });
+};
+
+export const getUserPermissions = async (userId, { user = null, activeBranchId = "", resource = null } = {}) => {
+  const targetUser =
+    user || (userId ? await User.findById(userId) : null);
+  if (!targetUser) {
+    const error = new Error("User not found");
+    error.status = 404;
+    error.code = "USER_NOT_FOUND";
+    throw error;
+  }
+  const effective = await resolveEffectiveAccessContext({
+    user: targetUser,
+    activeBranchId,
+  });
+
+  return {
+    userId: effective.userId,
+    permissions: Array.from(effective.permissions || []).sort(),
+    permissionGrants: Array.isArray(effective.permissionGrants) ? effective.permissionGrants : [],
+    roleAssignments: Array.isArray(effective.roleAssignments) ? effective.roleAssignments : [],
+    roleKeys: Array.isArray(effective.roleKeys) ? effective.roleKeys : [],
+    activeBranchId: effective.activeBranchId || "",
+    allowedBranchIds: effective.allowedBranchIds || [],
+    resource,
+  };
 };
 
 export const authorizePermission = ({
@@ -127,5 +168,6 @@ export const authorizePermission = ({
 
 export default {
   resolveEffectiveAccessContext,
+  getUserPermissions,
   authorizePermission,
 };

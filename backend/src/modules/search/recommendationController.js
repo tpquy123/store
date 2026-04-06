@@ -1,5 +1,9 @@
 import mongoose from "mongoose";
 import UniversalProduct from "../product/UniversalProduct.js";
+import {
+  decorateProductForCommerce,
+  PUBLIC_PRODUCT_STATUSES,
+} from "../product/productPricingService.js";
 
 const CATEGORY_ROUTE_MAP = {
   smartphone: "dien-thoai",
@@ -51,7 +55,7 @@ export const getRelatedProducts = async (req, res) => {
 
     const query = {
       _id: { $ne: product._id },
-      status: "AVAILABLE",
+      status: { $in: PUBLIC_PRODUCT_STATUSES },
     };
 
     if (product.productType?._id) {
@@ -70,37 +74,49 @@ export const getRelatedProducts = async (req, res) => {
       .lean();
 
     const normalized = products.map((item) => {
-      const variants = Array.isArray(item.variants) ? item.variants : [];
+      const commerceProduct = decorateProductForCommerce(item);
+      const variants = Array.isArray(commerceProduct.variants)
+        ? commerceProduct.variants
+        : [];
       const prices = variants
-        .map((variant) => Number(variant.price))
+        .map((variant) => Number(variant.sellingPrice ?? variant.price))
         .filter((price) => Number.isFinite(price));
       const originalPrices = variants
-        .map((variant) => Number(variant.originalPrice))
+        .map((variant) => Number(variant.basePrice ?? variant.originalPrice))
+        .filter((price) => Number.isFinite(price));
+      const costPrices = variants
+        .map((variant) => Number(variant.costPrice))
         .filter((price) => Number.isFinite(price));
 
       const minPrice = prices.length ? Math.min(...prices) : 0;
       const minOriginalPrice = originalPrices.length
         ? Math.min(...originalPrices)
         : minPrice;
+      const minCostPrice = costPrices.length ? Math.min(...costPrices) : 0;
       const images =
-        item.featuredImages?.length > 0
-          ? item.featuredImages
+        commerceProduct.featuredImages?.length > 0
+          ? commerceProduct.featuredImages
           : variants[0]?.images || [];
 
       return {
-        _id: item._id,
-        name: item.name,
-        model: item.model,
-        category: item.productType?.name || "",
-        categoryRoute: getCategoryRoute(item.productType),
+        _id: commerceProduct._id,
+        name: commerceProduct.name,
+        model: commerceProduct.model,
+        category: commerceProduct.productType?.name || "",
+        categoryRoute: getCategoryRoute(commerceProduct.productType),
         images,
         price: minPrice,
         originalPrice: minOriginalPrice,
-        averageRating: item.averageRating || 0,
-        totalReviews: item.totalReviews || 0,
+        sellingPrice: minPrice,
+        basePrice: minOriginalPrice,
+        costPrice: minCostPrice,
+        averageRating: commerceProduct.averageRating || 0,
+        totalReviews: commerceProduct.totalReviews || 0,
         variants,
-        baseSlug: item.baseSlug || item.slug,
-        installmentBadge: item.installmentBadge || "NONE",
+        baseSlug: commerceProduct.baseSlug || commerceProduct.slug,
+        installmentBadge: commerceProduct.installmentBadge || "NONE",
+        canPurchase: commerceProduct.canPurchase,
+        availabilityState: commerceProduct.availabilityState,
       };
     });
 

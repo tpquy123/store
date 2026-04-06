@@ -1,6 +1,7 @@
 import { normalizeUserAccess } from "../../authz/userAccessResolver.js";
 import { resolveEffectiveAccessContext } from "../../authz/authorizationService.js";
 import { runWithBranchContext } from "../../authz/branchContext.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 const deny = (res, code, message, status = 403) =>
   res.status(status).json({
@@ -24,13 +25,23 @@ export const resolveAccessContext = async (req, res, next) => {
   }
 
   const isGlobalAdmin = normalized.isGlobalAdmin;
-  const isCustomer = req.user.role === "CUSTOMER";
-  const isShipper = req.user.role === "SHIPPER";
   const bootstrapContext = await resolveEffectiveAccessContext({
     user: req.user,
     normalizedAccess: normalized,
     activeBranchId: "",
   });
+  const permissionSet =
+    bootstrapContext?.permissions instanceof Set ? bootstrapContext.permissions : new Set();
+  const isCustomer =
+    permissionSet.has(AUTHZ_ACTIONS.ACCOUNT_PROFILE_UPDATE_SELF) ||
+    permissionSet.has(AUTHZ_ACTIONS.CART_MANAGE_SELF) ||
+    permissionSet.has(AUTHZ_ACTIONS.REVIEW_CREATE_SELF) ||
+    permissionSet.has(AUTHZ_ACTIONS.PROMOTION_APPLY_SELF);
+  const isShipper =
+    permissionSet.has(AUTHZ_ACTIONS.TASK_READ) ||
+    permissionSet.has(AUTHZ_ACTIONS.TASK_UPDATE) ||
+    permissionSet.has(AUTHZ_ACTIONS.ORDER_VIEW_ASSIGNED) ||
+    permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_TASK);
   const allowedBranchIds = bootstrapContext.allowedBranchIds || [];
   const requiresBranchAssignment = Boolean(
     normalized.requiresBranchAssignment || allowedBranchIds.length > 0

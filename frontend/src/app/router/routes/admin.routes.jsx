@@ -20,7 +20,21 @@ const adminRoutes = (
   <>
     <Route
       element={
-        <ProtectedRoute allowedRoles={["ADMIN"]}>
+        <ProtectedRoute
+          allowedPermissions={[
+            "analytics.read.global",
+            "store.manage",
+            "promotion.manage",
+            "content.manage",
+            "brand.manage",
+            "product_type.manage",
+            "inventory.read",
+            "inventory.write",
+            "device.read",
+            "device.write",
+            "order.audit.read",
+          ]}
+        >
           <DashboardLayout />
         </ProtectedRoute>
       }

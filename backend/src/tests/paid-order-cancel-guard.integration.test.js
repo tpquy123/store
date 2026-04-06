@@ -39,6 +39,14 @@ let phoneSeed = 700000000;
 const nextPhone = () => `0${String(phoneSeed++).padStart(9, "0")}`;
 const nextOrderNumber = () => `ORD-GUARD-${String(orderSeed++).padStart(6, "0")}`;
 
+const ensureCollectionExists = async (name) => {
+  const existing = await mongoose.connection.db.listCollections({ name }).toArray();
+  if (existing.length > 0) {
+    return;
+  }
+  await mongoose.connection.createCollection(name);
+};
+
 const clearAllCollections = async () => {
   const collections = Object.values(mongoose.connection.collections);
   for (const collection of collections) {
@@ -141,6 +149,13 @@ before(
     await mongoose.connect(replSet.getUri(), {
       dbName: "paid-order-guard-test",
     });
+
+    await Promise.all([
+      ensureCollectionExists("orders"),
+      ensureCollectionExists("users"),
+      Order.init(),
+      User.init(),
+    ]);
 
     app = express();
     app.use(express.json());

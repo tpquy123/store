@@ -14,7 +14,10 @@ import {
   deleteBannerImage,
   resetToDefault,
 } from "./homePageController.js";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import { uploadBanner } from "../../middleware/uploadBanner.js";
 
 const router = express.Router();
@@ -23,8 +26,15 @@ const router = express.Router();
 router.get("/layout", getActiveLayout);
 
 // Admin routes - protected
-router.use(protect);
-router.use(restrictTo("ADMIN"));
+router.use(
+  protect,
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.CONTENT_MANAGE, {
+    scopeMode: (req) => (req.authz?.isGlobalAdmin ? "global" : "branch"),
+    requireActiveBranchFor: ["branch"],
+    resourceType: "CONTENT",
+  })
+);
 
 router.put("/layout", updateLayout);
 router.patch("/sections/:sectionId/toggle", toggleSection);

@@ -1,25 +1,5 @@
 import { api } from "@/shared/lib/http/httpClient";
 
-const createProductAPI = (base) => ({
-  getAll: (params) => api.get(`/${base}`, { params }),
-  getById: (id) => api.get(`/${base}/${id}`),
-  create: (data) => api.post(`/${base}`, data),
-  update: (id, data) => api.put(`/${base}/${id}`, data),
-  delete: (id) => api.delete(`/${base}/${id}`),
-  getVariants: (productId) => api.get(`/${base}/${productId}/variants`),
-  get: (slug, options = {}) => {
-    const { params = {} } = options;
-    return api.get(`/${base}/${slug}`, { params });
-  },
-});
-
-export const iPhoneAPI = createProductAPI("iphones");
-export const iPadAPI = createProductAPI("ipads");
-export const macAPI = createProductAPI("macs");
-export const airPodsAPI = createProductAPI("airpods");
-export const appleWatchAPI = createProductAPI("applewatches");
-export const accessoryAPI = createProductAPI("accessories");
-
 export const reviewAPI = {
   canReview: (productId) => api.get(`/reviews/can-review/${productId}`),
   getUploadSignature: (resourceType = "image") =>

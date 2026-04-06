@@ -34,6 +34,40 @@ const storeInventorySchema = new mongoose.Schema(
       min: 0,
     },
 
+    basePrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    originalPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    sellingPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    costPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    price: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+
+    priceUpdatedAt: {
+      type: Date,
+    },
+
     available: {
       type: Number,
       default: 0,

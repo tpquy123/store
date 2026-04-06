@@ -5,7 +5,10 @@
 
 import express from "express";
 import multer from "multer";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import {
   getAllVideos,
   getPublishedVideos,
@@ -109,12 +112,21 @@ router.post("/:id/share", incrementShare);
 // ADMIN ROUTES
 // ============================================
 
-router.get("/", protect, restrictTo("ADMIN"), getAllVideos);
+const requireContentManage = [
+  protect,
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.CONTENT_MANAGE, {
+    scopeMode: (req) => (req.authz?.isGlobalAdmin ? "global" : "branch"),
+    requireActiveBranchFor: ["branch"],
+    resourceType: "CONTENT",
+  }),
+];
+
+router.get("/", ...requireContentManage, getAllVideos);
 
 router.post(
   "/",
-  protect,
-  restrictTo("ADMIN"),
+  ...requireContentManage,
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
@@ -125,8 +137,7 @@ router.post(
 
 router.put(
   "/:id",
-  protect,
-  restrictTo("ADMIN"),
+  ...requireContentManage,
   upload.fields([
     { name: "video", maxCount: 1 },
     { name: "thumbnail", maxCount: 1 },
@@ -135,8 +146,8 @@ router.put(
   updateVideo
 );
 
-router.delete("/:id", protect, restrictTo("ADMIN"), deleteVideo);
+router.delete("/:id", ...requireContentManage, deleteVideo);
 
-router.put("/reorder", protect, restrictTo("ADMIN"), reorderVideos);
+router.put("/reorder", ...requireContentManage, reorderVideos);
 
 export default router;

@@ -23,8 +23,20 @@ const permissionSchema = new mongoose.Schema(
     },
     scopeType: {
       type: String,
-      enum: ["GLOBAL", "BRANCH", "SELF"],
+      enum: ["GLOBAL", "BRANCH", "SELF", "TASK", "RESOURCE"],
       required: true,
+      index: true,
+    },
+    defaultScope: {
+      type: String,
+      enum: ["GLOBAL", "BRANCH", "SELF", "TASK", "RESOURCE"],
+      default: "BRANCH",
+      index: true,
+    },
+    resourceType: {
+      type: String,
+      trim: true,
+      default: "",
       index: true,
     },
     description: {
@@ -51,5 +63,15 @@ const permissionSchema = new mongoose.Schema(
 );
 
 permissionSchema.index({ module: 1, action: 1 }, { unique: true });
+
+permissionSchema.pre("validate", function syncDerivedFields(next) {
+  if (!this.defaultScope) {
+    this.defaultScope = this.scopeType || "BRANCH";
+  }
+  if (!this.resourceType) {
+    this.resourceType = this.module || "";
+  }
+  next();
+});
 
 export default mongoose.models.Permission || mongoose.model("Permission", permissionSchema);

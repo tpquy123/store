@@ -9,7 +9,7 @@ import { Button } from "@/shared/ui/button";
 import { Star, ShoppingCart, Edit2, Trash2, ChevronLeft, ChevronRight } from "lucide-react";
 import { formatPrice } from "@/shared/lib/utils";
 import { useCartStore } from "@/features/cart";
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
 import { toast } from "sonner";
 import {
   AlertDialog,
@@ -202,6 +202,10 @@ const ProductCard = ({
   const navigate = useNavigate();
   const { addToCart } = useCartStore();
   const { isAuthenticated, user } = useAuthStore();
+  const canManageCart = usePermission("cart.manage.self");
+  const canManageProducts = usePermission(["product.update", "product.delete"], {
+    mode: "any",
+  });
 
   const [isAdding, setIsAdding] = useState(false);
   const [selectedVariant, setSelectedVariant] = useState(null);
@@ -209,10 +213,8 @@ const ProductCard = ({
   const [isVariantReady, setIsVariantReady] = useState(false);
   const [isHovered, setIsHovered] = useState(false);
 
-  const normalizedRole = String(user?.role || "").toUpperCase();
-  const hasAdminRole = ["ADMIN", "PRODUCT_MANAGER", "GLOBAL_ADMIN"].includes(normalizedRole);
   const canShowAdminActions =
-    typeof showAdminActions === "boolean" ? showAdminActions : hasAdminRole;
+    typeof showAdminActions === "boolean" ? showAdminActions : canManageProducts;
 
   const safeVariants = useMemo(
     () => (Array.isArray(product?.variants) ? product.variants : []),
@@ -289,7 +291,7 @@ const ProductCard = ({
   const handleAddToCart = async (e) => {
     e.stopPropagation();
     e.preventDefault();
-    if (!isAuthenticated || user?.role !== "CUSTOMER") { navigate("/login"); return; }
+    if (!isAuthenticated || !canManageCart) { navigate("/login"); return; }
     if (!selectedVariant) { toast.error("Vui lòng chọn phiên bản"); return; }
     if (selectedVariant.stock <= 0) { toast.error("Sản phẩm tạm hết hàng"); return; }
     setIsAdding(true);
@@ -375,7 +377,7 @@ const ProductCard = ({
           {isTopSeller && !isTopNew && <div className="badge-top badge-seller">Bán chạy</div>}
 
           {/* Add to cart hover button */}
-          {!hasAdminRole && isAuthenticated && user?.role === "CUSTOMER" && totalStock > 0 && (
+          {!canManageProducts && isAuthenticated && canManageCart && totalStock > 0 && (
             <button
               onClick={handleAddToCart}
               disabled={isAdding}

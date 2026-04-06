@@ -8,16 +8,43 @@ import {
   deletePromotion,
   applyPromotion,
 } from "./promotionController.js";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 const router = express.Router();
 
 // ==================== PUBLIC / CUSTOMER ====================
 router.get("/active", getActivePromotions);           // GET /promotions/active
-router.post("/apply", protect, applyPromotion);        // POST /promotions/apply
+router.post(
+  "/apply",
+  protect,
+  resolveAccessContext,
+  authorize(null, {
+    anyOf: [AUTHZ_ACTIONS.PROMOTION_APPLY_SELF, AUTHZ_ACTIONS.PROMOTION_MANAGE],
+    scopeMode: (req) =>
+      req.authz?.permissions?.has(AUTHZ_ACTIONS.PROMOTION_MANAGE)
+        ? req.authz?.isGlobalAdmin
+          ? "global"
+          : "branch"
+        : "self",
+    requireActiveBranchFor: ["branch"],
+    resourceType: "PROMOTION",
+  }),
+  applyPromotion
+);        // POST /promotions/apply
 
 // ==================== ADMIN ONLY ====================
-router.use(protect, restrictTo("ADMIN", "GLOBAL_ADMIN")); // ← Từ đây trở xuống chỉ ADMIN & GLOBAL_ADMIN
+router.use(
+  protect,
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.PROMOTION_MANAGE, {
+    scopeMode: (req) => (req.authz?.isGlobalAdmin ? "global" : "branch"),
+    requireActiveBranchFor: ["branch"],
+    resourceType: "PROMOTION",
+  })
+);
 
 // Đổi từ "/" → "/admin" để rõ ràng hơn
 router.get("/admin", getAllPromotions);        // GET /promotions/admin

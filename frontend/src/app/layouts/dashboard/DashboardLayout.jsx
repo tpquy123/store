@@ -15,6 +15,7 @@ import {
 } from "@/shared/ui/alert-dialog";
 import { cn, getNameInitials } from "@/shared/lib/utils";
 import { useAuthStore } from "@/features/auth";
+import { getRoleKeys, isGlobalAdminAuthorization } from "@/features/auth/lib/authorization";
 import { BranchSwitcher } from "@/features/stores";
 import { getDashboardNavigation, getRoleLabel } from "./sidebar.config";
 
@@ -47,13 +48,12 @@ const getActiveMenuPath = (pathname, items) => {
 const DashboardLayout = () => {
   const navigate = useNavigate();
   const location = useLocation();
-  const { user, authz, logout } = useAuthStore();
+  const { user, authz, authorization, logout } = useAuthStore();
   const [sidebarOpen, setSidebarOpen] = React.useState(false);
 
-  const isGlobalAdmin = Boolean(
-    authz?.isGlobalAdmin || String(user?.role || "").toUpperCase() === "GLOBAL_ADMIN",
-  );
-  const navigationItems = getDashboardNavigation({ user, authz });
+  const isGlobalAdmin = isGlobalAdminAuthorization({ user, authz, authorization });
+  const roleKeys = getRoleKeys({ user, authz, authorization });
+  const navigationItems = getDashboardNavigation({ user, authz, authorization });
   const activeMenuPath = getActiveMenuPath(location.pathname, navigationItems);
 
   const handleLogout = async () => {
@@ -118,7 +118,7 @@ const DashboardLayout = () => {
             </div>
             <div className="flex-1 overflow-hidden">
               <p className="text-sm font-semibold line-clamp-2">{user?.fullName}</p>
-              <p className="text-xs text-muted-foreground">{getRoleLabel(user?.role)}</p>
+              <p className="text-xs text-muted-foreground">{getRoleLabel(roleKeys || user?.role)}</p>
             </div>
           </div>
 

@@ -3,6 +3,7 @@
 import React, { useState } from "react";
 import { useNavigate, Link } from "react-router-dom";
 import { useAuthStore } from "../state/auth.store";
+import { resolveHomeRoute } from "../lib/authorization";
 import { LogIn } from "lucide-react";
 import { Button } from "@/shared/ui/button";
 import { Input } from "@/shared/ui/input";
@@ -39,33 +40,8 @@ const LoginPage = () => {
     const result = await login(formData);
 
     if (result.success) {
-      const user = useAuthStore.getState().user;
-
-      switch (user.role) {
-        case "ADMIN":
-          navigate("/admin");
-          break;
-        case "WAREHOUSE_MANAGER":
-          navigate("/warehouse-staff");
-          break;
-        case "PRODUCT_MANAGER":
-          navigate("/warehouse/products");
-          break;
-        case "ORDER_MANAGER":
-          navigate("/order-manager/orders");
-          break;
-        case "SHIPPER":
-          navigate("/shipper/dashboard");
-          break;
-        case "POS_STAFF":
-          navigate("/pos/dashboard");
-          break;
-        case "CASHIER":
-          navigate("/CASHIER/dashboard");
-          break;
-        default:
-          navigate("/");
-      }
+      const { user, authz, authorization } = useAuthStore.getState();
+      navigate(resolveHomeRoute({ user, authz, authorization }) || "/");
     }
   };
 

@@ -45,6 +45,7 @@ const branchAssignmentSchema = new mongoose.Schema(
         type: String,
         enum: [
           "BRANCH_ADMIN",
+          "SALES_STAFF",
           "WAREHOUSE_MANAGER",
           "WAREHOUSE_STAFF",
           "PRODUCT_MANAGER",
@@ -83,6 +84,7 @@ const userSchema = new mongoose.Schema(
       enum: [
         "USER",
         "CUSTOMER",
+        "SALES_STAFF",
         "WAREHOUSE_MANAGER",
         "WAREHOUSE_STAFF",
         "PRODUCT_MANAGER",
@@ -97,9 +99,30 @@ const userSchema = new mongoose.Schema(
       default: "USER",
     },
 
+    roles: [
+      {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: "Role",
+      },
+    ],
+
+    permissions: [
+      {
+        type: String,
+        lowercase: true,
+        trim: true,
+      },
+    ],
+
     authzVersion: {
       type: Number,
       default: 2,
+    },
+
+    authorizationVersion: {
+      type: Number,
+      default: 1,
+      min: 1,
     },
 
     systemRoles: [
@@ -132,7 +155,7 @@ const userSchema = new mongoose.Schema(
 
     permissionMode: {
       type: String,
-      enum: ["ROLE_FALLBACK", "EXPLICIT"],
+      enum: ["ROLE_FALLBACK", "EXPLICIT", "HYBRID"],
       default: "ROLE_FALLBACK",
       index: true,
     },

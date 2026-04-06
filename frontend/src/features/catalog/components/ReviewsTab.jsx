@@ -5,7 +5,7 @@
 // ============================================
 
 import React, { useCallback, useEffect, useState } from "react";
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
 import { reviewAPI } from "../api/catalog.api";
 import { toast } from "sonner";
 import {
@@ -37,6 +37,7 @@ import ImageModal from "../components/ImageModal";
 
 export const ReviewsTab = ({ productId, product, onReviewStatsChange }) => {
   const { user, isAuthenticated } = useAuthStore();
+  const canCreateReview = usePermission("review.create.self");
   const [reviews, setReviews] = useState([]);
   const [isLoading, setIsLoading] = useState(true);
   const [activeFilter, setActiveFilter] = useState("all");
@@ -58,7 +59,7 @@ export const ReviewsTab = ({ productId, product, onReviewStatsChange }) => {
   const [reviewEligibilityReason, setReviewEligibilityReason] = useState("");
   const [checkingPurchase, setCheckingPurchase] = useState(false);
 
-  const isCustomer = user?.role === "CUSTOMER";
+  const isCustomer = canCreateReview;
 
   // ✅ Add CSS for highlight animation
   useEffect(() => {

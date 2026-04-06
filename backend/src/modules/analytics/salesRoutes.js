@@ -4,7 +4,10 @@
 // ============================================
 
 import express from 'express';
-import { protect, restrictTo } from '../../middleware/authMiddleware.js';
+import { protect } from '../../middleware/authMiddleware.js';
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import productSalesService from './productSalesService.js';
 
 const router = express.Router();
@@ -67,8 +70,14 @@ router.get('/top-selling', async (req, res) => {
 // PROTECTED ROUTES - Admin only
 // ============================================
 
-router.use(protect);
-router.use(restrictTo('ADMIN'));
+router.use(
+  protect,
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.ANALYTICS_MANAGE_GLOBAL, {
+    scopeMode: "global",
+    resourceType: "ANALYTICS",
+  })
+);
 
 /**
  * POST /api/sales/reset-count

@@ -6,6 +6,8 @@ import { CategoryDropdown } from "@/features/catalog";
 const PublicNavigationMenus = ({
   isAuthenticated,
   user,
+  canManageCart,
+  canAccessCustomerSelfService,
   categoryMenuOpen,
   setCategoryMenuOpen,
   storeMenuOpen,
@@ -28,7 +30,7 @@ const PublicNavigationMenus = ({
       <nav className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 z-40">
         <div
           className={`grid h-16 ${
-            isAuthenticated && user?.role === "CUSTOMER"
+            isAuthenticated && canAccessCustomerSelfService
               ? "grid-cols-5"
               : "grid-cols-4"
           }`}
@@ -61,7 +63,7 @@ const PublicNavigationMenus = ({
             <span className="text-[10px] font-medium">Danh má»¥c</span>
           </button>
 
-          {isAuthenticated && user?.role === "CUSTOMER" && (
+          {isAuthenticated && canAccessCustomerSelfService && (
             <button
               onClick={() => setStoreMenuOpen(!storeMenuOpen)}
               className="flex flex-col items-center justify-center gap-1 text-gray-600 hover:text-red-500 transition-colors"

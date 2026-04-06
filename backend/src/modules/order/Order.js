@@ -132,6 +132,15 @@ const orderItemSchema = new mongoose.Schema(
       type: Number,
       min: 0,
     },
+    basePrice: {
+      type: Number,
+      min: 0,
+    },
+    costPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
     quantity: {
       type: Number,
       required: true,

@@ -3,6 +3,8 @@ import User from "./User.js";
 import { signToken } from "../../middleware/authMiddleware.js";
 import { normalizeUserAccess } from "../../authz/userAccessResolver.js";
 import { resolveEffectiveAccessContext } from "../../authz/authorizationService.js";
+import { ensurePermissionTemplatesSeeded } from "../../authz/permissionTemplateService.js";
+import { syncUserRoleAssignments } from "../../authz/roleAssignmentService.js";
 
 // ============================================
 // VALIDATION HELPERS
@@ -49,6 +51,101 @@ const branchFromBody = (body = {}) => {
   return "";
 };
 
+const normalizeRoleKey = (value) => String(value || "").trim().toUpperCase();
+
+const syncSelfScopedRole = async ({ user, roleKey, reason }) => {
+  await ensurePermissionTemplatesSeeded();
+  await syncUserRoleAssignments({
+    user,
+    assignments: [
+      {
+        roleKey,
+        scopeType: "SELF",
+        scopeRef: String(user?._id || ""),
+      },
+    ],
+    reason,
+  });
+};
+
+const resolveHomeRoute = ({ roleKeys = [], permissions = [] } = {}) => {
+  const normalizedRoleKeys = new Set((roleKeys || []).map(normalizeRoleKey));
+  const permissionSet = new Set((permissions || []).map((item) => String(item || "").trim().toLowerCase()));
+  const hasAnyPermission = (keys = []) => keys.some((key) => permissionSet.has(String(key || "").toLowerCase()));
+
+  if (
+    normalizedRoleKeys.has("GLOBAL_ADMIN") ||
+    hasAnyPermission([
+      "users.manage.global",
+      "users.manage.branch",
+      "analytics.read.global",
+      "analytics.read.branch",
+      "analytics.read.assigned",
+      "store.manage",
+      "promotion.manage",
+      "content.manage",
+      "brand.manage",
+      "product_type.manage",
+      "order.audit.read",
+    ])
+  ) {
+    return "/admin";
+  }
+  if (hasAnyPermission(["product.create", "product.update", "product.delete", "product.read"])) {
+    return "/warehouse/products";
+  }
+  if (
+    hasAnyPermission([
+      "warehouse.read",
+      "warehouse.write",
+      "inventory.read",
+      "inventory.write",
+      "transfer.read",
+      "transfer.create",
+      "transfer.approve",
+      "transfer.ship",
+      "transfer.receive",
+      "order.status.manage.warehouse",
+    ])
+  ) {
+    return "/warehouse-staff";
+  }
+  if (
+    hasAnyPermission([
+      "orders.read",
+      "orders.write",
+      "order.status.manage",
+      "order.assign.carrier",
+      "order.assign.store",
+      "order.audit.read",
+    ])
+  ) {
+    return "/order-manager/orders";
+  }
+  if (hasAnyPermission(["pos.payment.process", "pos.order.finalize", "pos.vat.issue", "pos.order.read.branch"])) {
+    return "/CASHIER/dashboard";
+  }
+  if (hasAnyPermission(["pos.order.create", "pos.order.read.self", "order.status.manage.pos"])) {
+    return "/pos/dashboard";
+  }
+  if (hasAnyPermission(["task.read", "task.update", "order.view.assigned", "order.status.manage.task"])) {
+    return "/shipper/dashboard";
+  }
+  if (
+    hasAnyPermission([
+      "cart.manage.self",
+      "account.profile.update.self",
+      "account.address.manage.self",
+      "order.view.self",
+      "promotion.apply.self",
+      "review.create.self",
+    ])
+  ) {
+    return "/profile";
+  }
+  return "/";
+};
+
 const buildEffectivePermissionsPayload = async (user, resolvedContext = null) => {
   const normalized = resolvedContext || normalizeUserAccess(user);
   const alreadyResolved =
@@ -64,14 +161,35 @@ const buildEffectivePermissionsPayload = async (user, resolvedContext = null) =>
         activeBranchId: normalized.activeBranchId || normalized.defaultBranchId || "",
       });
   const permissions = effective.permissions instanceof Set ? effective.permissions : new Set();
+  const sortedPermissions = Array.from(permissions).sort();
+  const roleAssignments = Array.isArray(effective.roleAssignments)
+    ? effective.roleAssignments.map((assignment) => ({
+        roleId: assignment.roleId ? String(assignment.roleId) : "",
+        roleKey: assignment.roleKey || "",
+        roleName: assignment.roleName || assignment.role?.name || assignment.roleKey || "",
+        scopeType: assignment.scopeType || "",
+        scopeRef: assignment.scopeRef || assignment.scopeId || "",
+      }))
+    : [];
+  const roleKeys =
+    Array.isArray(effective.roleKeys) && effective.roleKeys.length > 0
+      ? effective.roleKeys
+      : Array.from(
+          new Set(roleAssignments.map((assignment) => normalizeRoleKey(assignment.roleKey)).filter(Boolean))
+        );
 
-  return {
+  const authorizationPayload = {
     authzVersion: effective.authzVersion,
+    authorizationVersion: Number(user?.authorizationVersion || 1),
     authzState: effective.authzState,
     role: effective.role,
+    roles: Array.isArray(user?.roles) ? user.roles.map(String) : [],
+    roleKeys,
+    roleAssignments,
     systemRoles: effective.systemRoles,
     taskRoles: effective.taskRoles,
     branchAssignments: effective.branchAssignments,
+    directPermissions: Array.isArray(user?.permissions) ? user.permissions : [],
     allowedBranchIds: effective.allowedBranchIds,
     activeBranchId: effective.activeBranchId || effective.defaultBranchId || "",
     simulatedBranchId: effective.simulatedBranchId || "",
@@ -79,17 +197,24 @@ const buildEffectivePermissionsPayload = async (user, resolvedContext = null) =>
     noBranchAssigned: Boolean(effective.noBranchAssigned),
     requiresBranchAssignment: Boolean(effective.requiresBranchAssignment),
     isGlobalAdmin: Boolean(effective.isGlobalAdmin),
-    permissionMode: String(effective.permissionMode || "ROLE_FALLBACK"),
+    permissionMode: String(effective.permissionMode || "HYBRID"),
     permissionGrants: Array.isArray(effective.permissionGrants)
       ? effective.permissionGrants.map((grant) => ({
           key: grant.key,
           scopeType: grant.scopeType,
           scopeId: grant.scopeId || "",
           source: grant.source || "",
+          conditions: Array.isArray(grant.conditions) ? grant.conditions : [],
         }))
       : [],
-    permissions: Array.from(permissions).sort(),
+    permissions: sortedPermissions,
   };
+  authorizationPayload.homeRoute = resolveHomeRoute({
+    roleKeys: authorizationPayload.roleKeys,
+    permissions: authorizationPayload.permissions,
+  });
+
+  return authorizationPayload;
 };
 
 // ============================================
@@ -147,14 +272,23 @@ export const register = async (req, res) => {
     }
 
     // Create user with CUSTOMER role by default (unless specified by admin)
+    const normalizedRole = normalizeRoleKey(role || "CUSTOMER");
     const user = await User.create({
       fullName: fullName.trim(),
       phoneNumber,
       email: email || undefined,
       province,
       password,
-      role: role || "CUSTOMER",
+      role: normalizedRole,
     });
+
+    if (normalizedRole === "CUSTOMER") {
+      await syncSelfScopedRole({
+        user,
+        roleKey: "CUSTOMER",
+        reason: "register_customer",
+      });
+    }
 
     res.status(201).json({
       success: true,
@@ -225,6 +359,8 @@ export const login = async (req, res) => {
       maxAge: 7 * 24 * 60 * 60 * 1000, // 7 days
     });
 
+    const authorization = await buildEffectivePermissionsPayload(user);
+
     res.json({
       success: true,
       message: "Đăng nhập thành công",
@@ -238,7 +374,8 @@ export const login = async (req, res) => {
           province: user.province,
           avatar: user.avatar,
         },
-        authz: await buildEffectivePermissionsPayload(user),
+        authz: authorization,
+        authorization,
         token,
       },
     });
@@ -284,11 +421,14 @@ export const getCurrentUser = async (req, res) => {
       });
     }
 
+    const authorization = await buildEffectivePermissionsPayload(user, req.authz || null);
+
     res.json({
       success: true,
       data: {
         user,
-        authz: await buildEffectivePermissionsPayload(user, req.authz || null),
+        authz: authorization,
+        authorization,
       },
     });
   } catch (error) {
@@ -467,6 +607,12 @@ export const quickRegisterCustomer = async (req, res) => {
       isActive: true,
     });
 
+    await syncSelfScopedRole({
+      user,
+      roleKey: "CUSTOMER",
+      reason: "quick_register_customer",
+    });
+
     res.status(201).json({
       success: true,
       message: "Customer account created",
@@ -513,10 +659,13 @@ export const getEffectivePermissions = async (req, res) => {
           noBranchAssigned: false,
         };
 
+    const authorization = await buildEffectivePermissionsPayload(user, resolved);
+
     return res.json({
       success: true,
       data: {
-        authz: await buildEffectivePermissionsPayload(user, resolved),
+        authz: authorization,
+        authorization,
       },
     });
   } catch (error) {
@@ -581,11 +730,14 @@ export const setActiveBranchContext = async (req, res) => {
       contextMode: req.authz?.contextMode || "STANDARD",
     };
 
+    const authorization = await buildEffectivePermissionsPayload(updatedUser, resolved);
+
     return res.json({
       success: true,
       message: "Active branch updated",
       data: {
-        authz: await buildEffectivePermissionsPayload(updatedUser, resolved),
+        authz: authorization,
+        authorization,
       },
     });
   } catch (error) {
@@ -625,11 +777,14 @@ export const setSimulatedBranchContext = async (req, res) => {
       contextMode: "SIMULATED",
     };
 
+    const authorization = await buildEffectivePermissionsPayload(user, resolved);
+
     return res.json({
       success: true,
       message: "Simulation branch updated",
       data: {
-        authz: await buildEffectivePermissionsPayload(user, resolved),
+        authz: authorization,
+        authorization,
       },
     });
   } catch (error) {
@@ -654,11 +809,14 @@ export const clearSimulatedBranchContext = async (req, res) => {
       contextMode: "STANDARD",
     };
 
+    const authorization = await buildEffectivePermissionsPayload(user, resolved);
+
     return res.json({
       success: true,
       message: "Simulation branch cleared",
       data: {
-        authz: await buildEffectivePermissionsPayload(user, resolved),
+        authz: authorization,
+        authorization,
       },
     });
   } catch (error) {

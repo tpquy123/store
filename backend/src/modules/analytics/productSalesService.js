@@ -3,6 +3,7 @@ import UniversalProduct, {
   UniversalVariant,
 } from "../product/UniversalProduct.js";
 import ProductType from "../productType/ProductType.js";
+import { PUBLIC_PRODUCT_STATUSES } from "../product/productPricingService.js";
 
 const LEGACY_CATEGORY_TO_SLUG = {
   iphone: "smartphone",
@@ -136,7 +137,7 @@ export async function processOrderSales(order) {
 
 export async function getTopSellingProducts(category, limit = 10) {
   const parsedLimit = Math.max(1, parseInt(limit, 10) || 10);
-  const query = { status: "AVAILABLE" };
+  const query = { status: { $in: PUBLIC_PRODUCT_STATUSES } };
 
   if (category) {
     const productTypeIds = await resolveProductTypeFilter(category);
@@ -150,7 +151,7 @@ export async function getTopSellingProducts(category, limit = 10) {
     .sort({ salesCount: -1 })
     .limit(parsedLimit)
     .select("name model salesCount averageRating variants productType")
-    .populate("variants", "price images")
+    .populate("variants", "price sellingPrice basePrice originalPrice costPrice images")
     .populate("productType", "name slug")
     .lean();
 }
@@ -158,11 +159,11 @@ export async function getTopSellingProducts(category, limit = 10) {
 export async function getAllTopSellingProducts(limit = 10) {
   const parsedLimit = Math.max(1, parseInt(limit, 10) || 10);
 
-  return UniversalProduct.find({ status: "AVAILABLE" })
+  return UniversalProduct.find({ status: { $in: PUBLIC_PRODUCT_STATUSES } })
     .sort({ salesCount: -1 })
     .limit(parsedLimit)
     .select("name model salesCount averageRating variants productType")
-    .populate("variants", "price images")
+    .populate("variants", "price sellingPrice basePrice originalPrice costPrice images")
     .populate("productType", "name slug")
     .lean();
 }

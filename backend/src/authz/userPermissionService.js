@@ -1,10 +1,13 @@
 import mongoose from "mongoose";
 import Permission from "../modules/auth/Permission.js";
-import PermissionTemplate from "../modules/auth/PermissionTemplate.js";
-import TemplatePermission from "../modules/auth/TemplatePermission.js";
-import UserPermission from "../modules/auth/UserPermission.js";
+import Role from "../modules/auth/Role.js";
+import User from "../modules/auth/User.js";
+import UserPermissionGrant from "../modules/auth/UserPermissionGrant.js";
 import { logPermissionAuditEvent } from "../modules/auth/permissionAuditService.js";
-import { getOrLoadRawPermissionGrants, invalidateUserPermissionCache } from "./effectivePermissionCache.js";
+import {
+  getOrLoadRawPermissionGrants,
+  invalidateUserPermissionCache,
+} from "./effectivePermissionCache.js";
 import { SCOPE_TYPES, ensurePermissionCatalogSeeded } from "./permissionCatalog.js";
 
 const normalizePermissionKey = (value) => String(value || "").trim().toLowerCase();
@@ -12,21 +15,14 @@ const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
 const normalizeScopeId = (value) => String(value || "").trim();
 const normalizeTemplateKey = (value) => String(value || "").trim().toUpperCase();
 
-const toUniqueStrings = (items = []) => {
-  return Array.from(
-    new Set(
-      items
-        .map((item) => String(item || "").trim())
-        .filter(Boolean)
-    )
-  );
-};
+const toUniqueStrings = (items = []) =>
+  Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
 
 const buildAssignmentKey = ({ key, scopeType, scopeId }) =>
   `${normalizePermissionKey(key)}|${normalizeScopeType(scopeType)}|${normalizeScopeId(scopeId)}`;
 
 const isValidScopeType = (scopeType) =>
-  [SCOPE_TYPES.GLOBAL, SCOPE_TYPES.BRANCH, SCOPE_TYPES.SELF].includes(scopeType);
+  ["GLOBAL", "BRANCH", "SELF", "TASK", "RESOURCE"].includes(scopeType);
 
 const toUserPermissionCacheKey = (userId, permissionsVersion = 1) =>
   `${String(userId || "").trim()}:${Number(permissionsVersion || 1)}:raw`;
@@ -36,7 +32,7 @@ export const loadPermissionCatalogMap = async ({ includeInactive = false } = {})
 
   const filter = includeInactive ? {} : { isActive: true };
   const permissions = await Permission.find(filter)
-    .select("_id key module action scopeType isSensitive isActive")
+    .select("_id key module action scopeType isSensitive isActive resourceType defaultScope")
     .lean();
 
   const byKey = new Map();
@@ -50,6 +46,8 @@ export const loadPermissionCatalogMap = async ({ includeInactive = false } = {})
       scopeType: permission.scopeType,
       isSensitive: Boolean(permission.isSensitive),
       isActive: Boolean(permission.isActive),
+      resourceType: permission.resourceType || permission.module,
+      defaultScope: permission.defaultScope || permission.scopeType,
     });
   }
 
@@ -66,65 +64,52 @@ const expandTemplateAssignments = async ({
     return [];
   }
 
-  const templates = await PermissionTemplate.find({
+  const roles = await Role.find({
     key: { $in: normalizedTemplateKeys },
     isActive: true,
   })
-    .select("_id key")
+    .select("_id key permissions")
     .lean();
 
-  const templateIdToKey = new Map(templates.map((item) => [String(item._id), normalizeTemplateKey(item.key)]));
-  const templateIds = Array.from(templateIdToKey.keys());
-  if (!templateIds.length) {
-    return [];
-  }
-
-  const mappings = await TemplatePermission.find({
-    templateId: { $in: templateIds },
-  })
-    .populate("permissionId", "key scopeType isSensitive isActive")
-    .select("templateId permissionId scopeType scopeId")
-    .lean();
-
+  const catalogMap = await loadPermissionCatalogMap();
   const expanded = [];
-  for (const row of mappings) {
-    const permission = row.permissionId;
-    if (!permission || !permission.isActive) continue;
 
-    const key = normalizePermissionKey(permission.key);
-    const scopeType = normalizeScopeType(row.scopeType || permission.scopeType);
-    const scopeId = normalizeScopeId(row.scopeId);
-    const templateKey = templateIdToKey.get(String(row.templateId)) || "";
+  for (const role of roles) {
+    const templateKey = normalizeTemplateKey(role.key);
+    for (const permissionKey of role.permissions || []) {
+      const permission = catalogMap.get(normalizePermissionKey(permissionKey));
+      if (!permission || !permission.isActive) continue;
 
-    if (scopeType === SCOPE_TYPES.BRANCH) {
-      const branchScopeIds = scopeId ? [scopeId] : branchIds;
-      for (const branchId of branchScopeIds) {
+      const scopeType = normalizeScopeType(permission.scopeType);
+      if (scopeType === SCOPE_TYPES.BRANCH) {
+        for (const branchId of branchIds) {
+          expanded.push({
+            key: permission.key,
+            scopeType,
+            scopeId: normalizeScopeId(branchId),
+            fromTemplateKey: templateKey,
+          });
+        }
+        continue;
+      }
+
+      if (scopeType === SCOPE_TYPES.SELF) {
         expanded.push({
-          key,
+          key: permission.key,
           scopeType,
-          scopeId: normalizeScopeId(branchId),
+          scopeId: normalizeScopeId(targetUserId),
           fromTemplateKey: templateKey,
         });
+        continue;
       }
-      continue;
-    }
 
-    if (scopeType === SCOPE_TYPES.SELF) {
       expanded.push({
-        key,
+        key: permission.key,
         scopeType,
-        scopeId: scopeId || normalizeScopeId(targetUserId),
+        scopeId: "",
         fromTemplateKey: templateKey,
       });
-      continue;
     }
-
-    expanded.push({
-      key,
-      scopeType,
-      scopeId: "",
-      fromTemplateKey: templateKey,
-    });
   }
 
   return expanded;
@@ -160,7 +145,9 @@ export const normalizeRequestedPermissionAssignments = async ({
       continue;
     }
 
-    const requestedScopeType = normalizeScopeType(raw?.scopeType || catalog.scopeType);
+    const requestedScopeType = normalizeScopeType(
+      raw?.scopeType || catalog.defaultScope || catalog.scopeType
+    );
     if (!isValidScopeType(requestedScopeType)) {
       errors.push(`Invalid scope type for ${key}: ${requestedScopeType}`);
       continue;
@@ -173,7 +160,7 @@ export const normalizeRequestedPermissionAssignments = async ({
 
     const requestedScopeIds = [];
     if (requestedScopeType === SCOPE_TYPES.BRANCH) {
-      const rowScopeId = normalizeScopeId(raw?.scopeId);
+      const rowScopeId = normalizeScopeId(raw?.scopeId || raw?.scopeRef);
       const rowBranchIds = Array.isArray(raw?.branchIds) ? raw.branchIds : [];
       const mergedScopeIds = toUniqueStrings([rowScopeId, ...rowBranchIds, ...normalizedBranchIds]);
       if (!mergedScopeIds.length) {
@@ -182,13 +169,17 @@ export const normalizeRequestedPermissionAssignments = async ({
       }
       requestedScopeIds.push(...mergedScopeIds);
     } else if (requestedScopeType === SCOPE_TYPES.SELF) {
-      requestedScopeIds.push(normalizeScopeId(raw?.scopeId || targetUserId));
+      const resolvedSelfScopeId = normalizeScopeId(targetUserId || raw?.scopeId || raw?.scopeRef);
+      requestedScopeIds.push(resolvedSelfScopeId);
+    } else if (requestedScopeType === "TASK" || requestedScopeType === "RESOURCE") {
+      requestedScopeIds.push(normalizeScopeId(raw?.scopeId || raw?.scopeRef));
     } else {
       requestedScopeIds.push("");
     }
 
     for (const scopeId of requestedScopeIds) {
-      const normalizedScopeId = requestedScopeType === SCOPE_TYPES.GLOBAL ? "" : normalizeScopeId(scopeId);
+      const normalizedScopeId =
+        requestedScopeType === SCOPE_TYPES.GLOBAL ? "" : normalizeScopeId(scopeId);
       const assignment = {
         key,
         scopeType: requestedScopeType,
@@ -196,6 +187,8 @@ export const normalizeRequestedPermissionAssignments = async ({
         module: catalog.module,
         action: catalog.action,
         isSensitive: Boolean(catalog.isSensitive),
+        resourceType: catalog.resourceType,
+        conditions: Array.isArray(raw?.conditions) ? raw.conditions : [],
       };
       deduped.set(buildAssignmentKey(assignment), assignment);
     }
@@ -240,14 +233,14 @@ export const validateGrantAntiEscalation = ({
       }
     }
 
-    if (!isGlobalAdmin && scopeType === SCOPE_TYPES.SELF) {
+    if (!isGlobalAdmin && (scopeType === SCOPE_TYPES.SELF || scopeType === "TASK")) {
       const normalizedTargetUserId = normalizeScopeId(targetUserId);
       if (scopeId && normalizedTargetUserId && scopeId !== normalizedTargetUserId) {
-        violations.push(`SELF scope must target the user itself (${key})`);
+        violations.push(`Scoped self grant must target the user itself (${key})`);
         continue;
       }
       if (scopeId && actorId && scopeId !== actorId && scopeId !== normalizedTargetUserId) {
-        violations.push(`Cannot grant SELF scope to another actor (${key})`);
+        violations.push(`Cannot grant self/task scope to another actor (${key})`);
       }
     }
   }
@@ -263,45 +256,64 @@ export const loadActiveUserPermissionGrants = async ({
   permissionsVersion = 1,
 } = {}) => {
   const normalizedUserId = String(userId || "").trim();
-  if (!normalizedUserId) {
-    return [];
-  }
-
-  if (!mongoose.Types.ObjectId.isValid(normalizedUserId)) {
+  if (!normalizedUserId || !mongoose.Types.ObjectId.isValid(normalizedUserId)) {
     return [];
   }
 
   const cacheKey = toUserPermissionCacheKey(normalizedUserId, permissionsVersion);
   const rawRows = await getOrLoadRawPermissionGrants(cacheKey, async () => {
-    const rows = await UserPermission.find({
+    const rows = await UserPermissionGrant.find({
       userId: normalizedUserId,
       status: "ACTIVE",
+      $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
     })
-      .populate("permissionId", "key module action scopeType isSensitive isActive")
-      .select("permissionId scopeType scopeId grantedBy grantedAt")
+      .select("permissionKey scopeType scopeRef conditions assignedBy assignedAt expiresAt metadata")
       .lean();
     return rows;
   });
 
+  const catalogMap = await loadPermissionCatalogMap();
   const grants = [];
   for (const row of rawRows) {
-    const permission = row.permissionId;
+    const key = normalizePermissionKey(row.permissionKey);
+    const permission = catalogMap.get(key);
     if (!permission || !permission.isActive) continue;
-    const key = normalizePermissionKey(permission.key);
+
     grants.push({
       key,
       module: permission.module,
       action: permission.action,
       scopeType: normalizeScopeType(row.scopeType || permission.scopeType),
-      scopeId: normalizeScopeId(row.scopeId),
+      scopeId: normalizeScopeId(row.scopeRef),
+      scopeRef: normalizeScopeId(row.scopeRef),
       isSensitive: Boolean(permission.isSensitive),
-      grantedBy: row.grantedBy ? String(row.grantedBy) : "",
-      grantedAt: row.grantedAt || null,
-      source: "EXPLICIT",
+      resourceType: permission.resourceType,
+      defaultScope: permission.defaultScope,
+      assignedBy: row.assignedBy ? String(row.assignedBy) : "",
+      assignedAt: row.assignedAt || null,
+      conditions: Array.isArray(row.conditions) ? row.conditions : [],
+      source: "DIRECT",
     });
   }
 
   return grants;
+};
+
+const syncUserPermissionReadModel = async (userId) => {
+  const directPermissionKeys = await UserPermissionGrant.distinct("permissionKey", {
+    userId,
+    status: "ACTIVE",
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  });
+
+  await User.updateOne(
+    { _id: userId },
+    {
+      $set: {
+        permissions: directPermissionKeys.map(normalizePermissionKey),
+      },
+    }
+  );
 };
 
 export const applyUserPermissionAssignments = async ({
@@ -316,24 +328,19 @@ export const applyUserPermissionAssignments = async ({
     throw new Error("targetUserId is required");
   }
 
-  const catalogMap = await loadPermissionCatalogMap();
-
-  const existingRows = await UserPermission.find({
+  const existingRows = await UserPermissionGrant.find({
     userId: normalizedTargetUserId,
     status: "ACTIVE",
   })
-    .populate("permissionId", "key")
-    .select("_id permissionId scopeType scopeId status")
+    .select("_id permissionKey scopeType scopeRef conditions metadata")
     .lean();
 
   const existingByKey = new Map();
   for (const row of existingRows) {
-    const key = normalizePermissionKey(row?.permissionId?.key);
-    if (!key) continue;
     const assignmentKey = buildAssignmentKey({
-      key,
+      key: row.permissionKey,
       scopeType: row.scopeType,
-      scopeId: row.scopeId,
+      scopeId: row.scopeRef,
     });
     existingByKey.set(assignmentKey, row);
   }
@@ -349,57 +356,69 @@ export const applyUserPermissionAssignments = async ({
     if (!targetByKey.has(assignmentKey)) {
       revokeRowIds.push(String(row._id));
       revokedEntries.push({
-        key: normalizePermissionKey(row?.permissionId?.key),
+        key: normalizePermissionKey(row.permissionKey),
         scopeType: normalizeScopeType(row.scopeType),
-        scopeId: normalizeScopeId(row.scopeId),
+        scopeId: normalizeScopeId(row.scopeRef),
       });
     }
   }
 
   const grantDocs = [];
   const grantedEntries = [];
+  const catalogMap = await loadPermissionCatalogMap();
   for (const [assignmentKey, assignment] of targetByKey.entries()) {
     if (existingByKey.has(assignmentKey)) {
       continue;
     }
-    const catalog = catalogMap.get(normalizePermissionKey(assignment.key));
-    if (!catalog) continue;
+
+    const permission = catalogMap.get(normalizePermissionKey(assignment.key));
+    if (!permission) continue;
+
     grantDocs.push({
       userId: normalizedTargetUserId,
-      permissionId: catalog.id,
+      permissionKey: normalizePermissionKey(assignment.key),
       scopeType: normalizeScopeType(assignment.scopeType),
-      scopeId: normalizeScopeId(assignment.scopeId),
+      scopeRef: normalizeScopeId(assignment.scopeId),
+      effect: "ALLOW",
+      conditions: Array.isArray(assignment.conditions) ? assignment.conditions : [],
       status: "ACTIVE",
-      grantedBy: actorUserId || undefined,
-      grantedAt: new Date(),
+      assignedBy: actorUserId || null,
+      assignedAt: new Date(),
+      metadata: {
+        reason: reason || "permission_sync",
+      },
     });
+
     grantedEntries.push({
       key: normalizePermissionKey(assignment.key),
       scopeType: normalizeScopeType(assignment.scopeType),
       scopeId: normalizeScopeId(assignment.scopeId),
-      isSensitive: Boolean(catalog.isSensitive),
+      conditions: Array.isArray(assignment.conditions) ? assignment.conditions : [],
+      isSensitive: Boolean(permission.isSensitive),
     });
   }
 
   if (revokeRowIds.length) {
-    await UserPermission.updateMany(
+    await UserPermissionGrant.updateMany(
       { _id: { $in: revokeRowIds } },
       {
         $set: {
           status: "REVOKED",
-          revokedBy: actorUserId || null,
-          revokedAt: new Date(),
-          revokeReason: reason || "permission_sync",
+          expiresAt: new Date(),
+          metadata: {
+            reason: reason || "permission_sync",
+          },
         },
       }
     );
   }
 
   if (grantDocs.length) {
-    await UserPermission.insertMany(grantDocs, { ordered: false });
+    await UserPermissionGrant.insertMany(grantDocs, { ordered: false });
   }
 
   invalidateUserPermissionCache(normalizedTargetUserId);
+  await syncUserPermissionReadModel(normalizedTargetUserId);
 
   if (req) {
     for (const granted of grantedEntries) {
@@ -429,7 +448,7 @@ export const applyUserPermissionAssignments = async ({
         oldValues: revoked,
         newValues: {},
         changedPaths: ["permissions"],
-        note: "Permission revoke applied",
+        note: "Permission grant revoked",
         reason,
         metadata: {
           permission: revoked.key,
@@ -441,8 +460,8 @@ export const applyUserPermissionAssignments = async ({
   }
 
   return {
-    grantedCount: grantedEntries.length,
-    revokedCount: revokedEntries.length,
+    grantedCount: grantDocs.length,
+    revokedCount: revokeRowIds.length,
     grantedEntries,
     revokedEntries,
   };
@@ -452,15 +471,14 @@ export const collectBranchScopeIdsFromGrants = (grants = []) => {
   return toUniqueStrings(
     grants
       .filter((grant) => normalizeScopeType(grant.scopeType) === SCOPE_TYPES.BRANCH)
-      .map((grant) => normalizeScopeId(grant.scopeId))
+      .map((grant) => normalizeScopeId(grant.scopeId || grant.scopeRef))
   );
 };
 
 export default {
-  loadPermissionCatalogMap,
-  normalizeRequestedPermissionAssignments,
-  validateGrantAntiEscalation,
   loadActiveUserPermissionGrants,
   applyUserPermissionAssignments,
+  normalizeRequestedPermissionAssignments,
+  validateGrantAntiEscalation,
   collectBranchScopeIdsFromGrants,
 };

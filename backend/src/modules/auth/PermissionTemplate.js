@@ -20,6 +20,13 @@ const permissionTemplateSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    scope: {
+      type: String,
+      enum: ["SYSTEM", "BRANCH", "TASK"],
+      default: "BRANCH",
+      required: true,
+      index: true,
+    },
     isSystem: {
       type: Boolean,
       default: false,
@@ -39,6 +46,7 @@ const permissionTemplateSchema = new mongoose.Schema(
 );
 
 permissionTemplateSchema.index({ isSystem: 1, isActive: 1 });
+permissionTemplateSchema.index({ scope: 1, isActive: 1 });
 
 export default mongoose.models.PermissionTemplate ||
   mongoose.model("PermissionTemplate", permissionTemplateSchema);

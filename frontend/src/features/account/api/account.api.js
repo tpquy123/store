@@ -13,6 +13,14 @@ export const userAPI = {
   previewPermissionAssignments: (data) => api.post("/users/permissions/preview", data),
   createUser: (data) => api.post("/users", data),
   updateUserPermissions: (id, data) => api.put(`/users/${id}/permissions`, data),
+  getUserAuthorization: (id, params = {}) =>
+    api.get(`/users/${id}/authorization`, { params }),
+  getUserRoleAssignments: (id) => api.get(`/users/${id}/role-assignments`),
+  updateUserRoleAssignments: (id, data) =>
+    api.put(`/users/${id}/role-assignments`, data),
+  getUserPermissionGrants: (id) => api.get(`/users/${id}/permission-grants`),
+  updateUserPermissionGrants: (id, data) =>
+    api.put(`/users/${id}/permission-grants`, data),
   getUserEffectivePermissions: (id, params = {}) =>
     api.get(`/users/${id}/effective-permissions`, { params }),
   createEmployee: (data) => api.post("/users/employees", data),

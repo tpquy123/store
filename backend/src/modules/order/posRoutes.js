@@ -1,5 +1,5 @@
 import express from "express";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
 import { authorize } from "../../middleware/authz/authorize.js";
 import { AUTHZ_ACTIONS } from "../../authz/actions.js";
@@ -19,19 +19,48 @@ import {
 const router = express.Router();
 
 const resolvePosScopeMode = (req) => {
-  if (req?.authz?.isGlobalAdmin || req?.user?.role === "GLOBAL_ADMIN") {
+  if (req?.authz?.isGlobalAdmin) {
     return "global";
   }
   return "branch";
 };
 
-const requireOrdersRead = authorize(AUTHZ_ACTIONS.ORDERS_READ, {
+const requirePosReadSelf = authorize(AUTHZ_ACTIONS.POS_ORDER_READ_SELF, {
+  scopeMode: "self",
+  resourceType: "ORDER",
+});
+
+const requirePosReadBranch = authorize(AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH, {
   scopeMode: resolvePosScopeMode,
   requireActiveBranchFor: ["branch"],
   resourceType: "ORDER",
 });
 
-const requireOrdersWrite = authorize(AUTHZ_ACTIONS.ORDERS_WRITE, {
+const requirePosCreate = authorize(AUTHZ_ACTIONS.POS_ORDER_CREATE, {
+  scopeMode: "branch",
+  requireActiveBranch: true,
+  resourceType: "ORDER",
+});
+
+const requirePosPayment = authorize(AUTHZ_ACTIONS.POS_PAYMENT_PROCESS, {
+  scopeMode: resolvePosScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requirePosCancel = authorize(AUTHZ_ACTIONS.POS_ORDER_CANCEL, {
+  scopeMode: resolvePosScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requirePosFinalize = authorize(AUTHZ_ACTIONS.POS_ORDER_FINALIZE, {
+  scopeMode: resolvePosScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requirePosVat = authorize(AUTHZ_ACTIONS.POS_VAT_ISSUE, {
   scopeMode: resolvePosScopeMode,
   requireActiveBranchFor: ["branch"],
   resourceType: "ORDER",
@@ -62,45 +91,52 @@ router.use(protect, resolveAccessContext);
 
 router.post(
   "/create-order",
-  restrictTo("POS_STAFF", "ADMIN"),
-  requireOrdersWrite,
+  requirePosCreate,
   auditCreatePOSOrder,
   createPOSOrder
 );
-router.get("/my-orders", restrictTo("POS_STAFF", "ADMIN"), requireOrdersRead, getPOSOrderHistory);
-router.get("/orders/:id", restrictTo("POS_STAFF", "CASHIER", "ADMIN"), requireOrdersRead, getPOSOrderById);
+router.get("/my-orders", requirePosReadSelf, getPOSOrderHistory);
+router.get("/orders/:id", authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.POS_ORDER_READ_SELF, AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH],
+  scopeMode: (req) =>
+    req.authz?.permissions?.has(AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH) ? resolvePosScopeMode(req) : "self",
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+}), getPOSOrderById);
 
-router.get("/pending-orders", restrictTo("CASHIER", "ADMIN"), requireOrdersRead, getPendingOrders);
+router.get("/pending-orders", requirePosReadBranch, getPendingOrders);
 router.post(
   "/orders/:orderId/payment",
-  restrictTo("CASHIER", "ADMIN"),
-  requireOrdersWrite,
+  requirePosPayment,
   auditPOSPayment,
   processPayment
 );
 router.post(
   "/orders/:orderId/cancel",
-  restrictTo("CASHIER", "ADMIN"),
-  requireOrdersWrite,
+  requirePosCancel,
   auditPOSCancel,
   cancelPendingOrder
 );
 router.post(
   "/orders/:orderId/vat",
-  restrictTo("CASHIER", "ADMIN"),
-  requireOrdersWrite,
+  requirePosVat,
   auditPOSVat,
   issueVATInvoice
 );
 router.put(
   "/orders/:orderId/finalize",
-  restrictTo("CASHIER", "ADMIN"),
-  requireOrdersWrite,
+  requirePosFinalize,
   auditPOSFinalize,
   finalizePOSOrder
 );
 
-router.get("/history", restrictTo("POS_STAFF", "CASHIER", "ADMIN"), requireOrdersRead, getPOSOrderHistory);
-router.get("/history/all", restrictTo("POS_STAFF", "CASHIER", "ADMIN"), requireOrdersRead, getPOSOrderHistory);
+router.get("/history", authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.POS_ORDER_READ_SELF, AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH],
+  scopeMode: (req) =>
+    req.authz?.permissions?.has(AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH) ? resolvePosScopeMode(req) : "self",
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+}), getPOSOrderHistory);
+router.get("/history/all", requirePosReadBranch, getPOSOrderHistory);
 
 export default router;

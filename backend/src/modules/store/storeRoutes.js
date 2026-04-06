@@ -1,6 +1,8 @@
 import express from "express";
 import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import {
   getAllStores,
   getNearbyStores,
@@ -10,11 +12,17 @@ import {
   updateStore,
   deleteStore,
 } from "./storeController.js";
-import { restrictTo } from "../../middleware/authMiddleware.js";
 
 const router = express.Router();
 
-router.use(protect);
+router.use(protect, resolveAccessContext);
+
+const resolveStoreScopeMode = (req) => (req?.authz?.isGlobalAdmin ? "global" : "branch");
+const requireStoreManage = authorize(AUTHZ_ACTIONS.STORE_MANAGE, {
+  scopeMode: resolveStoreScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "STORE",
+});
 
 router.get("/", getAllStores);
 router.get("/nearby", getNearbyStores);
@@ -24,8 +32,8 @@ router.post("/:storeId/check-stock", checkStoreStock);
 // Admin only routes — resolveAccessContext must come after restrictTo so that
 // BranchContext (scopeMode="global" for GLOBAL_ADMIN) is available to
 // branchIsolationPlugin when the controller queries branch-scoped models.
-router.post("/", restrictTo("ADMIN", "GLOBAL_ADMIN"), resolveAccessContext, createStore);
-router.put("/:id", restrictTo("ADMIN", "GLOBAL_ADMIN"), resolveAccessContext, updateStore);
-router.delete("/:id", restrictTo("ADMIN", "GLOBAL_ADMIN"), resolveAccessContext, deleteStore);
+router.post("/", requireStoreManage, createStore);
+router.put("/:id", requireStoreManage, updateStore);
+router.delete("/:id", requireStoreManage, deleteStore);
 
 export default router;

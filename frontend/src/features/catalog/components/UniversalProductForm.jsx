@@ -25,7 +25,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/shared/ui/tabs";
 import { Plus, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { brandAPI, productTypeAPI, universalProductAPI } from "../api/catalog.api";
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
 
 const INSTALLMENT_BADGE_OPTIONS = [
   { value: "NONE", label: "Không hiển thị" },
@@ -50,7 +50,8 @@ const UniversalProductForm = ({
 }) => {
   const { user } = useAuthStore();
   const isEdit = mode === "edit";
-  const canEditVariantStock = isEdit && user?.role === "WAREHOUSE_MANAGER";
+  const canEditInventory = usePermission("inventory.write");
+  const canEditVariantStock = isEdit && canEditInventory;
   const [activeTab, setActiveTab] = useState("basic");
   const [isSubmitting, setIsSubmitting] = useState(false);
 
@@ -66,7 +67,7 @@ const UniversalProductForm = ({
     brand: "",
     productType: "",
     condition: "NEW",
-    status: "AVAILABLE",
+    status: "COMING_SOON",
     installmentBadge: "NONE",
     description: "",
     featuredImages: [""],
@@ -85,9 +86,7 @@ const UniversalProductForm = ({
         options: [
           {
             variantName: "",
-            originalPrice: "",
-            price: "",
-            stock: "",
+            basePrice: "",
           },
         ],
       },
@@ -141,9 +140,9 @@ const UniversalProductForm = ({
         colorGroups[colorKey].options.push({
           variantName: variant.variantName || "",
           sku: variant.sku || "",
-          originalPrice: String(variant.originalPrice || ""),
-          price: String(variant.price || ""),
-          stock: String(variant.stock || ""),
+          basePrice: String(
+            variant.basePrice ?? variant.originalPrice ?? variant.price ?? ""
+          ),
         });
       });
 
@@ -155,7 +154,7 @@ const UniversalProductForm = ({
                 color: "",
                 images: [""],
                 options: [
-                  { variantName: "", originalPrice: "", price: "", stock: "" },
+                  { variantName: "", basePrice: "" },
                 ],
               },
             ];
@@ -166,7 +165,7 @@ const UniversalProductForm = ({
         brand: product.brand?._id || product.brand || "",
         productType: product.productType?._id || product.productType || "",
         condition: product.condition || "NEW",
-        status: product.status || "AVAILABLE",
+        status: product.status || "COMING_SOON",
         installmentBadge: product.installmentBadge || "NONE",
         description: product.description || "",
         featuredImages: Array.isArray(product.featuredImages)
@@ -195,7 +194,7 @@ const UniversalProductForm = ({
         brand: "",
         productType: "",
         condition: "NEW",
-        status: "AVAILABLE",
+        status: "COMING_SOON",
         installmentBadge: "NONE",
         description: "",
         featuredImages: [""],
@@ -214,9 +213,7 @@ const UniversalProductForm = ({
             options: [
               {
                 variantName: "",
-                originalPrice: "",
-                price: "",
-                stock: "",
+                basePrice: "",
               },
             ],
           },
@@ -274,7 +271,7 @@ const UniversalProductForm = ({
           color: "",
           images: [""],
           options: [
-            { variantName: "", originalPrice: "", price: "", stock: "" },
+            { variantName: "", basePrice: "" },
           ],
         },
       ],
@@ -316,9 +313,7 @@ const UniversalProductForm = ({
     const updated = [...formData.variants];
     updated[vIdx].options.push({
       variantName: "",
-      originalPrice: "",
-      price: "",
-      stock: "",
+      basePrice: "",
     });
     setFormData({ ...formData, variants: updated });
   };
@@ -407,22 +402,23 @@ const UniversalProductForm = ({
           return false;
         }
 
-        const price = Number(option.price);
-        const originalPrice = Number(option.originalPrice);
+        const basePrice = Number(option.basePrice);
+        const price = basePrice;
+        const originalPrice = basePrice;
 
-        if (!option.price?.trim() || isNaN(price) || price < 0) {
+        if (!option.basePrice?.trim() || isNaN(basePrice) || basePrice < 0) {
           toast.error(`Giá bán không hợp lệ ở biến thể ${i + 1}, phiên bản ${j + 1}`);
           setActiveTab("variants");
           return false;
         }
 
-        if (!option.originalPrice?.trim() || isNaN(originalPrice) || originalPrice < 0) {
+        if (false) {
           toast.error(`Giá gốc không hợp lệ ở biến thể ${i + 1}, phiên bản ${j + 1}`);
           setActiveTab("variants");
           return false;
         }
 
-        if (price > originalPrice && originalPrice > 0) {
+        if (false) {
           toast.error(`Giá bán > giá gốc ở biến thể ${i + 1}, phiên bản ${j + 1}`);
           setActiveTab("variants");
           return false;
@@ -447,7 +443,6 @@ const UniversalProductForm = ({
         brand: formData.brand,
         productType: formData.productType,
         condition: formData.condition,
-        status: formData.status,
         installmentBadge: formData.installmentBadge,
         description: formData.description?.trim() || "",
         featuredImages: formData.featuredImages.filter((url) => url?.trim()),
@@ -467,9 +462,7 @@ const UniversalProductForm = ({
           images: v.images.filter((img) => img?.trim()),
           options: v.options.map((opt) => ({
             variantName: opt.variantName.trim(),
-            originalPrice: Number(opt.originalPrice),
-            price: Number(opt.price),
-            stock: Number(opt.stock),
+            basePrice: Number(opt.basePrice),
           })),
         })),
         createdBy: user._id,
@@ -613,9 +606,7 @@ const UniversalProductForm = ({
                     <Label>Trạng thái</Label>
                     <Select
                       value={formData.status}
-                      onValueChange={(value) =>
-                        setFormData({ ...formData, status: value })
-                      }
+                      disabled
                     >
                       <SelectTrigger>
                         <SelectValue />
@@ -680,7 +671,7 @@ const UniversalProductForm = ({
                       }
                     >
                       <SelectTrigger>
-                        <SelectValue />
+                        <SelectValue placeholder="Auto managed" />
                       </SelectTrigger>
                       <SelectContent>
                         {TRACKING_MODE_OPTIONS.map((option) => (
@@ -958,7 +949,7 @@ const UniversalProductForm = ({
                         {variant.options.map((opt, oIdx) => (
                           <div
                             key={oIdx}
-                            className="grid grid-cols-1 md:grid-cols-5 gap-3 items-end p-3 border rounded-md bg-gray-50"
+                            className="grid grid-cols-1 md:grid-cols-4 gap-3 items-end p-3 border rounded-md bg-gray-50"
                           >
                             <div className="space-y-2">
                               <Label>
@@ -983,12 +974,12 @@ const UniversalProductForm = ({
                               <Label>Giá gốc</Label>
                               <Input
                                 type="number"
-                                value={opt.originalPrice}
+                                value={opt.basePrice || ""}
                                 onChange={(e) =>
                                   handleVariantOptionChange(
                                     vIdx,
                                     oIdx,
-                                    "originalPrice",
+                                    "basePrice",
                                     e.target.value
                                   )
                                 }
@@ -1000,21 +991,16 @@ const UniversalProductForm = ({
                               <Label>Giá bán</Label>
                               <Input
                                 type="number"
-                                value={opt.price}
+                                value={opt.basePrice || ""}
                                 onChange={(e) =>
                                   handleVariantOptionChange(
                                     vIdx,
                                     oIdx,
-                                    "price",
+                                    "basePrice",
                                     e.target.value
                                   )
                                 }
-                                className={
-                                  Number(opt.price) > Number(opt.originalPrice) &&
-                                  Number(opt.originalPrice) > 0
-                                    ? "border-red-500"
-                                    : ""
-                                }
+                                disabled
                                 required
                               />
                             </div>
@@ -1023,18 +1009,10 @@ const UniversalProductForm = ({
                               <Label>Số lượng</Label>
                               <Input
                                 type="number"
-                                value={opt.stock}
+                                value=""
                                 min="0"
-                                onChange={(e) =>
-                                  handleVariantOptionChange(
-                                    vIdx,
-                                    oIdx,
-                                    "stock",
-                                    e.target.value
-                                  )
-                                }
-                                required={canEditVariantStock}
-                                disabled={!canEditVariantStock}
+                                onChange={() => {}}
+                                disabled
                               />
                             </div>
 

@@ -21,10 +21,14 @@ import { orderAPI } from "../api/orders.api";
 import { userAPI } from "@/features/account";
 import { getStatusColor, getStatusStage, getStatusText } from "@/shared/lib/utils";
 import { AlertCircle } from "lucide-react";
-import { useAuthStore } from "@/features/auth";
+import { usePermission } from "@/features/auth";
 
 const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
-  const { user } = useAuthStore();
+  const canManageCoordinatorWorkflow = usePermission("order.status.manage");
+  const canManageWarehouseWorkflow = usePermission("order.status.manage.warehouse");
+  const canManageTaskWorkflow = usePermission("order.status.manage.task");
+  const canManagePosWorkflow = usePermission("order.status.manage.pos");
+  const canCompleteInStorePick = usePermission("order.pick.complete.instore");
   const [newStatus, setNewStatus] = useState("");
   const [note, setNote] = useState("");
   const [shippers, setShippers] = useState([]);
@@ -102,17 +106,35 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
   };
 
   const getValidTransitions = (orderData) => {
-    const filterByRole = (transitions) => {
-      if (user?.role === "ORDER_MANAGER") {
-        return transitions.filter(
-          (item) =>
-            item.value === "PROCESSING" ||
-            item.value === "SHIPPING" ||
-            item.value === "CONFIRMED" ||
-            item.value === "CANCELLED"
-        );
+    const filterByPermission = (transitions) => {
+      if (canManageCoordinatorWorkflow) {
+        return transitions;
       }
-      return transitions;
+
+      return transitions.filter((item) => {
+        if (canManageWarehouseWorkflow || canCompleteInStorePick) {
+          return [
+            "PROCESSING",
+            "PREPARING",
+            "PREPARING_SHIPMENT",
+            "SHIPPING",
+            "PENDING_PAYMENT",
+            "CANCELLED",
+            "CANCEL_REFUND_PENDING",
+            "INCIDENT_REFUND_PROCESSING",
+          ].includes(item.value);
+        }
+
+        if (canManageTaskWorkflow) {
+          return ["SHIPPING", "DELIVERED", "RETURNED"].includes(item.value);
+        }
+
+        if (canManagePosWorkflow) {
+          return ["CONFIRMED", "PENDING_PAYMENT", "DELIVERED", "CANCELLED"].includes(item.value);
+        }
+
+        return false;
+      });
     };
 
     const currentOrderStage = orderData?.statusStage || getStatusStage(orderData?.status);
@@ -152,7 +174,7 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
         RETURNED: [],
         CANCELLED: [],
       };
-      return filterByRole(inStoreTransitionsByStage[currentOrderStage] || []);
+      return filterByPermission(inStoreTransitionsByStage[currentOrderStage] || []);
     }
 
     const onlineTransitionsByStage = {
@@ -190,7 +212,7 @@ const OrderStatusUpdateDialog = ({ order, open, onClose, onSuccess }) => {
       CANCELLED: [],
     };
 
-    return filterByRole(onlineTransitionsByStage[currentOrderStage] || []);
+    return filterByPermission(onlineTransitionsByStage[currentOrderStage] || []);
   };
 
   const handleSubmit = async () => {

@@ -1,7 +1,6 @@
 import Permission from "../modules/auth/Permission.js";
-import PermissionTemplate from "../modules/auth/PermissionTemplate.js";
-import TemplatePermission from "../modules/auth/TemplatePermission.js";
-import { ROLE_PERMISSIONS } from "./actions.js";
+import Role from "../modules/auth/Role.js";
+import { ROLE_PERMISSIONS, SYSTEM_ROLES, BRANCH_ROLES, TASK_ROLES } from "./actions.js";
 import { ensurePermissionCatalogSeeded } from "./permissionCatalog.js";
 
 const SYSTEM_TEMPLATE_METADATA = Object.freeze({
@@ -45,12 +44,25 @@ const SYSTEM_TEMPLATE_METADATA = Object.freeze({
     name: "Shipper",
     description: "Assigned shipment tasks and personal analytics",
   },
+  SALES_STAFF: {
+    name: "Sales Staff",
+    description: "Sales operations with branch-scoped order and warranty access",
+  },
 });
 
-const normalizeTemplateKey = (value) => String(value || "").trim().toUpperCase();
+const normalizeRoleKey = (value) => String(value || "").trim().toUpperCase();
 const normalizePermissionKey = (value) => String(value || "").trim().toLowerCase();
 
 const roleKeys = Object.keys(ROLE_PERMISSIONS);
+
+const resolveTemplateScope = (roleKey) => {
+  const normalized = normalizeRoleKey(roleKey);
+  if (normalized === "CUSTOMER") return "SELF";
+  if (SYSTEM_ROLES.includes(normalized)) return "GLOBAL";
+  if (TASK_ROLES.includes(normalized)) return "TASK";
+  if (BRANCH_ROLES.includes(normalized)) return "BRANCH";
+  return "BRANCH";
+};
 
 const getTemplatePayload = (roleKey) => {
   const metadata = SYSTEM_TEMPLATE_METADATA[roleKey] || {
@@ -59,13 +71,18 @@ const getTemplatePayload = (roleKey) => {
   };
 
   return {
-    key: normalizeTemplateKey(roleKey),
+    key: normalizeRoleKey(roleKey),
     name: metadata.name,
     description: metadata.description,
+    scopeType: resolveTemplateScope(roleKey),
     isSystem: true,
     isActive: true,
+    permissions: (ROLE_PERMISSIONS[roleKey] || [])
+      .filter((permissionKey) => permissionKey !== "*")
+      .map(normalizePermissionKey),
     metadata: {
-      roleKey: normalizeTemplateKey(roleKey),
+      roleKey: normalizeRoleKey(roleKey),
+      source: "SYSTEM_ROLE_TEMPLATE",
     },
   };
 };
@@ -79,141 +96,64 @@ export const ensurePermissionTemplatesSeeded = async () => {
 
   const templateOps = roleKeys.map((roleKey) => ({
     updateOne: {
-      filter: { key: normalizeTemplateKey(roleKey) },
+      filter: { key: normalizeRoleKey(roleKey) },
       update: {
         $set: getTemplatePayload(roleKey),
       },
       upsert: true,
     },
   }));
-  await PermissionTemplate.bulkWrite(templateOps, { ordered: false });
-
-  const templates = await PermissionTemplate.find({
-    key: { $in: roleKeys.map(normalizeTemplateKey) },
-  })
-    .select("_id key")
-    .lean();
-
-  const templateIdByKey = new Map(
-    templates.map((item) => [normalizeTemplateKey(item.key), String(item._id)])
-  );
-
-  const permissionKeys = new Set();
-  for (const roleKey of roleKeys) {
-    for (const permission of ROLE_PERMISSIONS[roleKey] || []) {
-      if (permission === "*") continue;
-      permissionKeys.add(normalizePermissionKey(permission));
-    }
-  }
-
-  const permissionRows = await Permission.find({
-    key: { $in: Array.from(permissionKeys) },
-  })
-    .select("_id key scopeType")
-    .lean();
-
-  const permissionByKey = new Map(
-    permissionRows.map((row) => [normalizePermissionKey(row.key), row])
-  );
-
-  const templateIds = Array.from(templateIdByKey.values());
-  if (templateIds.length) {
-    await TemplatePermission.deleteMany({
-      templateId: { $in: templateIds },
-      "metadata.source": "SYSTEM_ROLE_TEMPLATE",
-    });
-  }
-
-  const mappingDocs = [];
-  for (const roleKey of roleKeys) {
-    const templateId = templateIdByKey.get(normalizeTemplateKey(roleKey));
-    if (!templateId) continue;
-
-    const rolePermissions = ROLE_PERMISSIONS[roleKey] || [];
-    let sortOrder = 0;
-    for (const rawPermission of rolePermissions) {
-      if (rawPermission === "*") {
-        for (const row of permissionRows) {
-          mappingDocs.push({
-            templateId,
-            permissionId: row._id,
-            scopeType: row.scopeType,
-            scopeId: "",
-            sortOrder,
-            metadata: {
-              source: "SYSTEM_ROLE_TEMPLATE",
-              roleKey: normalizeTemplateKey(roleKey),
-            },
-          });
-          sortOrder += 1;
-        }
-        continue;
-      }
-
-      const permission = permissionByKey.get(normalizePermissionKey(rawPermission));
-      if (!permission) continue;
-
-      mappingDocs.push({
-        templateId,
-        permissionId: permission._id,
-        scopeType: permission.scopeType,
-        scopeId: "",
-        sortOrder,
-        metadata: {
-          source: "SYSTEM_ROLE_TEMPLATE",
-          roleKey: normalizeTemplateKey(roleKey),
-        },
-      });
-      sortOrder += 1;
-    }
-  }
-
-  if (mappingDocs.length) {
-    await TemplatePermission.insertMany(mappingDocs, { ordered: false });
-  }
-
+  await Role.bulkWrite(templateOps, { ordered: false });
   return templateOps.length;
 };
 
 export const getPermissionTemplates = async ({ includeInactive = false } = {}) => {
   const templateFilter = includeInactive ? {} : { isActive: true };
-  const templates = await PermissionTemplate.find(templateFilter)
-    .select("_id key name description isSystem isActive metadata")
+  const roles = await Role.find(templateFilter)
+    .select("_id key name description scopeType isSystem isActive permissions metadata")
     .sort({ isSystem: -1, key: 1 })
     .lean();
 
-  const templateIds = templates.map((template) => template._id);
-  const mappings = templateIds.length
-    ? await TemplatePermission.find({ templateId: { $in: templateIds } })
-        .populate("permissionId", "key module action scopeType isSensitive")
-        .select("templateId permissionId scopeType scopeId sortOrder")
-        .sort({ sortOrder: 1, createdAt: 1 })
+  const permissionKeys = Array.from(
+    new Set(
+      roles.flatMap((role) =>
+        Array.isArray(role.permissions) ? role.permissions.map(normalizePermissionKey) : []
+      )
+    )
+  );
+
+  const permissionRows = permissionKeys.length
+    ? await Permission.find({ key: { $in: permissionKeys } })
+        .select("_id key module action scopeType isSensitive isActive resourceType defaultScope")
         .lean()
     : [];
+  const permissionByKey = new Map(
+    permissionRows.map((row) => [normalizePermissionKey(row.key), row])
+  );
 
-  const permissionsByTemplateId = new Map();
-  for (const row of mappings) {
-    const templateId = String(row.templateId);
-    if (!permissionsByTemplateId.has(templateId)) {
-      permissionsByTemplateId.set(templateId, []);
-    }
-
-    const permission = row.permissionId;
-    if (!permission) continue;
-
-    permissionsByTemplateId.get(templateId).push({
-      key: permission.key,
-      module: permission.module,
-      action: permission.action,
-      scopeType: row.scopeType || permission.scopeType,
-      scopeId: row.scopeId || "",
-      isSensitive: Boolean(permission.isSensitive),
-    });
-  }
-
-  return templates.map((template) => ({
-    ...template,
-    permissions: permissionsByTemplateId.get(String(template._id)) || [],
+  return roles.map((role) => ({
+    _id: String(role._id),
+    key: normalizeRoleKey(role.key),
+    name: role.name,
+    description: role.description || "",
+    scope: role.scopeType || "BRANCH",
+    scopeType: role.scopeType || "BRANCH",
+    isSystem: Boolean(role.isSystem),
+    isActive: Boolean(role.isActive),
+    metadata: role.metadata || {},
+    permissions: (role.permissions || [])
+      .map((permissionKey) => permissionByKey.get(normalizePermissionKey(permissionKey)))
+      .filter(Boolean)
+      .map((permission) => ({
+        key: normalizePermissionKey(permission.key),
+        module: permission.module,
+        action: permission.action,
+        scopeType: permission.scopeType,
+        scopeId: "",
+        isSensitive: Boolean(permission.isSensitive),
+        resourceType: permission.resourceType || permission.module,
+        defaultScope: permission.defaultScope || permission.scopeType,
+      })),
   }));
 };
 

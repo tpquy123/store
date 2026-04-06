@@ -48,6 +48,8 @@ export const getStatusColor = (status) => {
     IN_TRANSIT: "bg-sky-100 text-sky-800",
     PAID: "bg-green-100 text-green-800",
     UNPAID: "bg-red-100 text-red-800",
+    ACTIVE: "bg-emerald-100 text-emerald-800",
+    LOCKED: "bg-red-100 text-red-800",
   };
   return map[status] || "bg-gray-100 text-gray-800";
 };
@@ -86,6 +88,8 @@ export const getStatusText = (status) => {
     HOME_DELIVERY: "Giao tận nhà",
     CLICK_AND_COLLECT: "Nhận tại cửa hàng",
     IN_STORE: "Mua tại cửa hàng",
+    ACTIVE: "Hoạt động",
+    LOCKED: "Đã khóa",
   };
   return map[status] || status;
 };

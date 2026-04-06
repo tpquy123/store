@@ -66,8 +66,8 @@ const OrderManagementPage = () => {
   const [stores, setStores] = useState([]);
   const [assigningOrderIds, setAssigningOrderIds] = useState({});
   
-  const { user, authz } = useAuthStore();
-  const isGlobalAdmin = user?.role === "GLOBAL_ADMIN" || authz?.isGlobalAdmin;
+  const { authz } = useAuthStore();
+  const isGlobalAdmin = Boolean(authz?.isGlobalAdmin);
   const limit = 20;
 
   useEffect(() => {

@@ -8,6 +8,7 @@ import StoreInventory from "../modules/inventory/StoreInventory.js";
 import Inventory from "../modules/warehouse/Inventory.js";
 import Notification from "../modules/notification/Notification.js";
 import UniversalProduct, { UniversalVariant } from "../modules/product/UniversalProduct.js";
+import { resolveVariantPricingSnapshot } from "../modules/product/productPricingService.js";
 import Order from "../modules/order/Order.js";
 import {
   assignStore,
@@ -139,6 +140,35 @@ const ensure = (condition, message) => {
   }
 };
 
+const normalizeBranchId = (value) => {
+  if (!value) return "";
+  if (typeof value === "string") return value.trim();
+  if (value?._id) return String(value._id).trim();
+  return value?.toString ? value.toString().trim() : String(value).trim();
+};
+
+const collectActiveBranchIds = (user) => {
+  const ids = new Set();
+  const assignments = Array.isArray(user?.branchAssignments) ? user.branchAssignments : [];
+
+  for (const assignment of assignments) {
+    const status = String(assignment?.status || "ACTIVE").trim().toUpperCase();
+    if (status !== "ACTIVE") continue;
+
+    const storeId = normalizeBranchId(assignment?.storeId);
+    if (storeId) {
+      ids.add(storeId);
+    }
+  }
+
+  const legacyStoreId = normalizeBranchId(user?.storeLocation);
+  if (legacyStoreId) {
+    ids.add(legacyStoreId);
+  }
+
+  return Array.from(ids);
+};
+
 const readStoreInventory = async ({ storeId, productId, variantSku }) =>
   StoreInventory.findOne({ storeId, productId, variantSku })
     .setOptions({ skipBranchIsolation: true })
@@ -178,17 +208,20 @@ const run = async () => {
       (await User.findOne({ role: "ORDER_MANAGER" }).select("_id role fullName name email storeLocation").lean()) ||
       null;
     const shippers = await User.find({ role: "SHIPPER" })
-      .select("_id role fullName name email storeLocation")
-      .limit(3)
+      .select("_id role fullName name email storeLocation branchAssignments")
       .lean();
 
     ensure(customer, "No CUSTOMER user found");
     ensure(globalAdmin, "No GLOBAL_ADMIN/ADMIN user found");
     ensure(dispatchAdmin, "No ORDER_MANAGER/ADMIN user found");
     ensure(shippers.length >= 1, "No SHIPPER user found");
-
-    const assignedShipper = shippers[0];
-    const nonAssignedShipper = shippers[1] || null;
+    const shipperEligibleBranchIds = new Set(
+      shippers.flatMap((shipper) => collectActiveBranchIds(shipper))
+    );
+    ensure(
+      shipperEligibleBranchIds.size > 0,
+      "No SHIPPER assigned to any active branch"
+    );
 
     const activeStores = await Store.find({ status: "ACTIVE" })
       .select("_id name code capacity stats")
@@ -229,10 +262,15 @@ const run = async () => {
         productId: productIdStr,
         stock: { $gte: 2 },
       })
-        .select("_id sku price stock salesCount productId")
+        .select("_id sku price basePrice originalPrice sellingPrice stock salesCount productId")
         .lean();
 
       if (!variant) {
+        continue;
+      }
+
+      const pricingSnapshot = resolveVariantPricingSnapshot(variant);
+      if (Number(pricingSnapshot.price) <= 0) {
         continue;
       }
 
@@ -246,7 +284,9 @@ const run = async () => {
       const sorted = rows.sort((a, b) => Number(b.available) - Number(a.available));
       const storeAInv = sorted[0];
       const storeBInv = sorted.find(
-        (item) => String(item.storeId) !== String(storeAInv.storeId)
+        (item) =>
+          String(item.storeId) !== String(storeAInv.storeId) &&
+          shipperEligibleBranchIds.has(String(item.storeId))
       );
       if (!storeBInv) {
         continue;
@@ -269,6 +309,20 @@ const run = async () => {
     );
 
     const { variant, product, storeA, storeB } = selected;
+    const effectiveVariantPrice = Number(resolveVariantPricingSnapshot(variant).price) || 0;
+    const storeBId = String(storeB._id);
+
+    const assignedShipper = shippers.find((shipper) =>
+      collectActiveBranchIds(shipper).includes(storeBId)
+    );
+    ensure(assignedShipper, `No SHIPPER found assigned to Store B (${storeBId})`);
+
+    const nonAssignedShipper =
+      shippers.find(
+        (shipper) =>
+          String(shipper._id) !== String(assignedShipper._id) &&
+          !collectActiveBranchIds(shipper).includes(storeBId)
+      ) || null;
 
     variantSnapshot = {
       id: String(variant._id),
@@ -335,7 +389,7 @@ const run = async () => {
           variantId: String(variant._id),
           variantSku: variant.sku,
           quantity: TEST_QTY,
-          price: Number(variant.price) || 0,
+          price: effectiveVariantPrice,
         },
       ],
       shippingAddress: {

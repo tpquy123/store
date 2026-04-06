@@ -2,6 +2,11 @@ import React, { useEffect, useState } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
 import Breadcrumb from "@/shared/ui/Breadcrumb";
 import { useAuthStore } from "@/features/auth";
+import {
+  getAuthorizationSnapshot,
+  hasPermissionSnapshot,
+  resolveHomeRoute,
+} from "@/features/auth/lib/authorization";
 import { useCartStore } from "@/features/cart";
 import { productTypeAPI } from "@/features/catalog";
 import { SearchOverlay } from "@/features/search";
@@ -82,7 +87,7 @@ const isLikelyImageUrl = (value = "") => {
 
 const PublicLayout = () => {
   const navigate = useNavigate();
-  const { isAuthenticated, user } = useAuthStore();
+  const { isAuthenticated, user, authz, authorization } = useAuthStore();
   const cartItemCount = useCartStore((state) => state.cartCount);
   const fetchCartCount = useCartStore((state) => state.fetchCartCount);
 
@@ -94,13 +99,26 @@ const PublicLayout = () => {
   const [desktopSelectedDistrict, setDesktopSelectedDistrict] = useState(0);
   const [selectedDistrict, setSelectedDistrict] = useState(0);
   const [footerProductTypes, setFooterProductTypes] = useState([]);
+  const snapshot = getAuthorizationSnapshot({ authz, authorization });
+  const canManageCart = hasPermissionSnapshot(snapshot, "cart.manage.self");
+  const canAccessCustomerSelfService = hasPermissionSnapshot(
+    snapshot,
+    [
+      "cart.manage.self",
+      "account.profile.update.self",
+      "account.address.manage.self",
+      "order.view.self",
+      "promotion.apply.self",
+      "review.create.self",
+    ],
+    { mode: "any" },
+  );
 
   useEffect(() => {
-    if (!isAuthenticated) return;
-    if (String(user?.role || "").toUpperCase() !== "CUSTOMER") return;
+    if (!isAuthenticated || !canManageCart) return;
 
     fetchCartCount();
-  }, [fetchCartCount, isAuthenticated, user?.role]);
+  }, [canManageCart, fetchCartCount, isAuthenticated]);
 
   useEffect(() => {
     if (storeMenuOpen || contactMenuOpen || desktopStoreMenuOpen) {
@@ -136,22 +154,11 @@ const PublicLayout = () => {
   }, []);
 
   const handleProfileNavigation = () => {
-    const normalizedRole = String(user?.role || "").toUpperCase();
-
-    if (normalizedRole === "CUSTOMER") navigate("/profile");
-    else if (normalizedRole === "ADMIN" || normalizedRole === "GLOBAL_ADMIN") {
-      navigate("/admin");
-    } else if (normalizedRole === "WAREHOUSE_MANAGER") {
-      navigate("/warehouse-staff");
-    } else if (normalizedRole === "PRODUCT_MANAGER") {
-      navigate("/warehouse/products");
-    } else if (normalizedRole === "ORDER_MANAGER") {
-      navigate("/order-manager/orders");
-    } else if (normalizedRole === "POS_STAFF") {
-      navigate("/pos/dashboard");
-    } else if (normalizedRole === "CASHIER") {
-      navigate("/CASHIER/dashboard");
+    if (canAccessCustomerSelfService) {
+      navigate("/profile");
+      return;
     }
+    navigate(resolveHomeRoute({ user, authz, authorization }) || "/");
   };
 
   const filteredStores =
@@ -192,6 +199,7 @@ const PublicLayout = () => {
         isAuthenticated={isAuthenticated}
         user={user}
         cartItemCount={cartItemCount}
+        canManageCart={canManageCart}
         navigate={navigate}
         handleProfileNavigation={handleProfileNavigation}
         setSearchOpen={setSearchOpen}
@@ -202,6 +210,8 @@ const PublicLayout = () => {
       <PublicNavigationMenus
         isAuthenticated={isAuthenticated}
         user={user}
+        canManageCart={canManageCart}
+        canAccessCustomerSelfService={canAccessCustomerSelfService}
         categoryMenuOpen={categoryMenuOpen}
         setCategoryMenuOpen={setCategoryMenuOpen}
         storeMenuOpen={storeMenuOpen}

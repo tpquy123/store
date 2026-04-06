@@ -173,7 +173,7 @@ test("disallowed role cannot access order audit list", async () => {
     .set("Authorization", `Bearer ${token}`);
 
   assert.equal(response.status, 403);
-  assert.equal(response.body?.code, "AUTHZ_AUDIT_ROLE_DENIED");
+  assert.equal(response.body?.code, "AUTHZ_ACTION_DENIED");
 });
 
 test("branch-scoped order manager only sees own branch logs", async () => {

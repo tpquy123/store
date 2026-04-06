@@ -1,6 +1,6 @@
 // ============================================
 // FILE: frontend/src/pages/pos-staff/POSDashboard.jsx
-// ✅ V3: Fixed - Chọn sản phẩm → Tạo đơn → Chuyển Kho
+// ✅ V3: Fixed - Chọn sản phẩm → Tạo đơn POS
 // ============================================
 
 import React, { useState, useEffect, useMemo, useCallback } from "react";
@@ -92,7 +92,7 @@ const POSDashboard = () => {
   useEffect(() => {
     const loadTypes = async () => {
       try {
-        const res = await productTypeAPI.getAll({ status: 'ACTIVE' });
+        const res = await productTypeAPI.getPublic({ status: "ACTIVE" });
         const types = res.data?.data?.productTypes || res.data?.productTypes || [];
         setProductTypes(types);
         if (types.length > 0 && !selectedCategory) {
@@ -424,7 +424,7 @@ const POSDashboard = () => {
         promotionCode: appliedPromotion?.code || null,
       });
 
-      toast.success("Tạo đơn chuyển kho thành công. Đơn đang chờ Order Manager xử lý.");
+      toast.success("Tạo đơn bán hàng thành công. Đơn đang chờ Order Manager xử lý.");
 
       // Reset form
       setCart([]);
@@ -663,7 +663,7 @@ const POSDashboard = () => {
               onClick={handleCreateOrder} 
               disabled={cart.length === 0 || isLoading}
             >
-               {isLoading ? "Đang xử lý..." : "Tạo đơn chuyển kho"}
+               {isLoading ? "Đang xử lý..." : "Tạo đơn bán hàng"}
             </Button>
             <Button variant="ghost" className="w-full text-red-500 h-8 text-xs" onClick={clearCart}>
                Xóa giỏ hàng

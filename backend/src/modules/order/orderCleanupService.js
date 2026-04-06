@@ -4,6 +4,7 @@ import UniversalProduct, { UniversalVariant } from "../product/UniversalProduct.
 import { ORDER_AUDIT_ACTIONS } from "./orderAuditActions.js";
 import { buildOrderAuditPayload } from "./orderAuditAdapter.js";
 import { safeWriteAuditEntry } from "../audit/auditService.js";
+import { recalculateProductAvailability } from "../product/productPricingService.js";
 
 const getModelsByType = () => {
   return { Product: UniversalProduct, Variant: UniversalVariant };
@@ -59,6 +60,7 @@ export const cancelExpiredVNPayOrders = async () => {
     }
 
     console.log(`Found ${expiredOrders.length} expired pending-payment orders to cancel`);
+    const affectedProductIds = new Set();
 
     for (const order of expiredOrders) {
       const beforeOrder = order.toObject ? order.toObject() : { ...order };
@@ -83,12 +85,16 @@ export const cancelExpiredVNPayOrders = async () => {
           variant.stock += item.quantity;
           variant.salesCount = Math.max(0, (variant.salesCount || 0) - item.quantity);
           await variant.save({ session });
+          if (variant.productId) {
+            affectedProductIds.add(String(variant.productId));
+          }
         }
 
         const product = await models.Product.findById(item.productId).session(session);
         if (product) {
           product.salesCount = Math.max(0, (product.salesCount || 0) - item.quantity);
           await product.save({ session });
+          affectedProductIds.add(String(product._id));
         }
       }
 
@@ -143,6 +149,10 @@ export const cancelExpiredVNPayOrders = async () => {
 
       activeOrderContext = null;
       console.log(`Auto-cancelled order: ${order.orderNumber}`);
+    }
+
+    for (const productId of affectedProductIds) {
+      await recalculateProductAvailability({ productId, session });
     }
 
     await session.commitTransaction();

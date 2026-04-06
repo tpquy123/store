@@ -1,7 +1,10 @@
 import express from "express";
 import rateLimit, { ipKeyGenerator } from "express-rate-limit";
 
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import {
   canReviewProduct,
   createReview,
@@ -54,27 +57,98 @@ router.get("/product/:productId", getProductReviews);
 router.get(
   "/can-review/:productId",
   protect,
-  restrictTo("CUSTOMER"),
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.REVIEW_CREATE_SELF, {
+    scopeMode: "self",
+    resourceType: "REVIEW",
+  }),
   canReviewProduct
 );
 
-router.use(protect);
+const resolveReviewModerationScope = (req) =>
+  req.authz?.isGlobalAdmin ? "global" : "branch";
+const resolveReviewUploadScope = (req) =>
+  req.authz?.permissions?.has(AUTHZ_ACTIONS.REVIEW_MODERATE)
+    ? resolveReviewModerationScope(req)
+    : "self";
+
+router.use(protect, resolveAccessContext);
 
 router.post(
   "/upload/signature",
-  restrictTo("CUSTOMER", "ADMIN"),
+  authorize(null, {
+    anyOf: [AUTHZ_ACTIONS.REVIEW_UPLOAD_SELF, AUTHZ_ACTIONS.REVIEW_MODERATE],
+    scopeMode: resolveReviewUploadScope,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "REVIEW",
+  }),
   reviewUploadSignatureLimiter,
   getReviewUploadSignature
 );
 
-router.post("/", restrictTo("CUSTOMER"), createReviewLimiter, createReview);
-router.put("/:id", restrictTo("CUSTOMER"), updateReview);
+router.post(
+  "/",
+  authorize(AUTHZ_ACTIONS.REVIEW_CREATE_SELF, {
+    scopeMode: "self",
+    resourceType: "REVIEW",
+  }),
+  createReviewLimiter,
+  createReview
+);
+router.put(
+  "/:id",
+  authorize(AUTHZ_ACTIONS.REVIEW_UPDATE_SELF, {
+    scopeMode: "self",
+    resourceType: "REVIEW",
+  }),
+  updateReview
+);
 
-router.delete("/:id", restrictTo("CUSTOMER", "ADMIN"), deleteReview);
-router.post("/:id/like", restrictTo("CUSTOMER", "ADMIN"), likeReview);
+router.delete(
+  "/:id",
+  authorize(null, {
+    anyOf: [AUTHZ_ACTIONS.REVIEW_DELETE_SELF, AUTHZ_ACTIONS.REVIEW_MODERATE],
+    scopeMode: resolveReviewUploadScope,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "REVIEW",
+  }),
+  deleteReview
+);
+router.post(
+  "/:id/like",
+  authorize(AUTHZ_ACTIONS.REVIEW_LIKE_SELF, {
+    scopeMode: "self",
+    resourceType: "REVIEW",
+  }),
+  likeReview
+);
 
-router.post("/:id/reply", restrictTo("ADMIN"), replyToReview);
-router.put("/:id/reply", restrictTo("ADMIN"), updateAdminReply);
-router.patch("/:id/toggle-visibility", restrictTo("ADMIN"), toggleReviewVisibility);
+router.post(
+  "/:id/reply",
+  authorize(AUTHZ_ACTIONS.REVIEW_REPLY, {
+    scopeMode: resolveReviewModerationScope,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "REVIEW",
+  }),
+  replyToReview
+);
+router.put(
+  "/:id/reply",
+  authorize(AUTHZ_ACTIONS.REVIEW_REPLY, {
+    scopeMode: resolveReviewModerationScope,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "REVIEW",
+  }),
+  updateAdminReply
+);
+router.patch(
+  "/:id/toggle-visibility",
+  authorize(AUTHZ_ACTIONS.REVIEW_MODERATE, {
+    scopeMode: resolveReviewModerationScope,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "REVIEW",
+  }),
+  toggleReviewVisibility
+);
 
 export default router;

@@ -68,24 +68,13 @@ export const protect = async (req, res, next) => {
   }
 };
 
-export const restrictTo = (...roles) => {
-  return (req, res, next) => {
-    const hasSystemGlobalAdminRole =
-      Array.isArray(req?.user?.systemRoles) && req.user.systemRoles.includes("GLOBAL_ADMIN");
-
-    if (req.user.role === "GLOBAL_ADMIN" || req?.authz?.isGlobalAdmin || hasSystemGlobalAdminRole) {
-      return next();
-    }
-
-    if (!roles.includes(req.user.role)) {
-      return res.status(403).json({
-        success: false,
-        message: "Ban khong co quyen thuc hien hanh dong nay",
-      });
-    }
-
-    next();
-  };
+export const restrictTo = () => {
+  return (_req, res) =>
+    res.status(500).json({
+      success: false,
+      code: "AUTHZ_ROLE_GUARD_REMOVED",
+      message: "Legacy role-based authorization middleware has been removed. Use permission-based authorize() instead.",
+    });
 };
 
 export const signToken = (id, permissionsVersion = 1) => {

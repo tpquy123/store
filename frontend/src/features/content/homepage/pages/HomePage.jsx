@@ -7,12 +7,33 @@ import React, { useEffect, useState, useCallback, useRef } from "react";
 import { Loading } from "@/shared/ui/Loading";
 import DynamicSection from "../components/DynamicSection";
 import { ProductEditModal, universalProductAPI } from "@/features/catalog";
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
 import { homePageAPI } from "../api/homepage.api";
 import { toast } from "sonner";
 
+const logDebug = (label, payload) => {
+  if (!import.meta.env?.DEV) return;
+  if (payload === undefined) {
+    console.info(label);
+    return;
+  }
+  console.info(label, payload);
+};
+
+const logWarn = (label, payload) => {
+  if (!import.meta.env?.DEV) return;
+  if (payload === undefined) {
+    console.warn(label);
+    return;
+  }
+  console.warn(label, payload);
+};
+
 const HomePage = () => {
   const { isAuthenticated, user } = useAuthStore();
+  const canManageHomepage = usePermission(["content.manage", "product.update", "product.create"], {
+    mode: "any",
+  });
 
   const [layout, setLayout] = useState(null);
   const [allProducts, setAllProducts] = useState([]);
@@ -24,18 +45,21 @@ const HomePage = () => {
   const [showEditModal, setShowEditModal] = useState(false);
   const [editingProduct, setEditingProduct] = useState(null);
 
-  const isAdmin =
-    isAuthenticated &&
-    ["ADMIN", "WAREHOUSE_MANAGER", "PRODUCT_MANAGER"].includes(user?.role);
+  const isAdmin = isAuthenticated && canManageHomepage;
 
   // ============================================
   // FETCH HOMEPAGE LAYOUT
   // ============================================
   const fetchLayout = useCallback(async () => {
     try {
+      logDebug("[HOMEPAGE] Fetch layout...");
       const response = await homePageAPI.getLayout();
       const layoutData = response.data?.data?.layout;
       setLayout(layoutData);
+      logDebug("[HOMEPAGE] Layout loaded", {
+        sections: layoutData?.sections?.length || 0,
+        enabled: layoutData?.sections?.filter((s) => s.enabled)?.length || 0,
+      });
     } catch (error) {
       console.error("❌ [API ERROR] Error fetching layout:", {
         message: error.message,
@@ -54,8 +78,26 @@ const HomePage = () => {
   // ============================================
   const fetchAllProducts = useCallback(async () => {
     try {
+      logDebug("[HOMEPAGE] Fetch universal products", {
+        params: { limit: 500 },
+      });
       const response = await universalProductAPI.getAll({ limit: 500 }); // Fetch enough for homepage
-      const products = response.data?.data?.products || [];
+      const payload = response?.data;
+      const products = payload?.data?.products || [];
+      logDebug("[HOMEPAGE] Universal products response", {
+        status: response?.status,
+        hasData: Boolean(payload?.data),
+        keys: payload ? Object.keys(payload) : [],
+        dataKeys: payload?.data ? Object.keys(payload.data) : [],
+        total: payload?.data?.total,
+        received: products.length,
+        sample: products.slice(0, 3).map((p) => ({
+          id: p?._id,
+          name: p?.name,
+          productType: p?.productType?.name || p?.productType || "",
+          status: p?.status,
+        })),
+      });
 
       // Normalize for display
       const normalizedProducts = products.map((p) => ({
@@ -91,6 +133,13 @@ const HomePage = () => {
       }
 
       setAllProducts(normalizedProducts);
+
+      if (!normalizedProducts.length) {
+        logWarn("[HOMEPAGE] No products returned", {
+          total: payload?.data?.total,
+          status: payload?.status,
+        });
+      }
     } catch (err) {
       console.error("❌ [API ERROR] Error loading products:", {
         message: err.message,
@@ -101,6 +150,12 @@ const HomePage = () => {
         raw: err
       });
       toast.error("Không thể tải dữ liệu sản phẩm");
+      logWarn("[HOMEPAGE] Fetch products failed", {
+        message: err?.message,
+        status: err?.response?.status,
+        data: err?.response?.data,
+        url: err?.config?.url,
+      });
     }
   }, []);
 

@@ -10,11 +10,12 @@ import { api } from "@/shared/lib/http/httpClient";
 import { orderAPI } from "@/features/orders";
 import { getStatusStage, getStatusText } from "@/shared/lib/utils";
 
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
 
 const PickOrdersPage = () => {
   const navigate = useNavigate();
   const { user } = useAuthStore();
+  const canCompleteInStorePick = usePermission("order.pick.complete.instore");
   const [searchParams] = useSearchParams();
   const orderId = searchParams.get("orderId");
   const [step, setStep] = useState(1);
@@ -30,7 +31,7 @@ const PickOrdersPage = () => {
 
   useEffect(() => {
     if (orderId) { loadPickList(orderId); } else { loadPendingOrders(); }
-  }, [orderId]);
+  }, [canCompleteInStorePick, orderId]);
 
   const loadPendingOrders = async () => {
     try {
@@ -49,7 +50,7 @@ const PickOrdersPage = () => {
         new Map(merged.map((order) => [order._id, order])).values()
       );
       const visibleOrders =
-        user?.role === "WAREHOUSE_STAFF"
+        !canCompleteInStorePick
           ? uniqueById.filter(
               (order) =>
                 order.orderSource !== "IN_STORE" &&

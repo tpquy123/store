@@ -1,8 +1,3 @@
-// ============================================
-// FILE: backend/src/modules/warehouse/goodsReceiptController.js
-// Controllers cho chức năng nhận hàng vào kho
-// ============================================
-
 import mongoose from "mongoose";
 import GoodsReceipt from "./GoodsReceipt.js";
 import PurchaseOrder from "./PurchaseOrder.js";
@@ -21,6 +16,12 @@ import {
   resolveAfterSalesConfigByProductId,
 } from "../device/afterSalesConfig.js";
 import { registerSerializedUnits } from "../device/deviceService.js";
+import {
+  applyPricingSnapshotToDocument,
+  recalculateProductAvailability,
+  resolveVariantPricingSnapshot,
+  updateCurrentPricingForSku,
+} from "../product/productPricingService.js";
 
 const RECEIVABLE_PO_STATUSES = new Set(["CONFIRMED", "PARTIAL"]);
 const DEFAULT_STORE_MIN_STOCK = 5;
@@ -40,6 +41,12 @@ const toNonNegativeInteger = (value) => {
   return Math.floor(parsed);
 };
 
+const toNonNegativeMoney = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
 const normalizeQualityStatus = (value) => {
   const allowed = new Set(["GOOD", "DAMAGED", "EXPIRED"]);
   return allowed.has(value) ? value : "GOOD";
@@ -50,9 +57,7 @@ const calculateSellableQuantity = ({
   damagedQuantity,
   qualityStatus,
 }) => {
-  if (qualityStatus !== "GOOD") {
-    return 0;
-  }
+  if (qualityStatus !== "GOOD") return 0;
   return Math.max(0, receivedQuantity - damagedQuantity);
 };
 
@@ -62,9 +67,7 @@ const buildStoreAllocationPlan = async ({
   receivedQuantity,
   session,
 }) => {
-  if (!productId || !variantSku || receivedQuantity <= 0) {
-    return [];
-  }
+  if (!productId || !variantSku || receivedQuantity <= 0) return [];
 
   const stores = await Store.find({
     status: "ACTIVE",
@@ -73,9 +76,7 @@ const buildStoreAllocationPlan = async ({
     .select("_id capacity.maxOrdersPerDay")
     .session(session);
 
-  if (stores.length === 0) {
-    return [];
-  }
+  if (stores.length === 0) return [];
 
   const storeIds = stores.map((store) => store._id);
   const currentInventories = await StoreInventory.find({
@@ -93,55 +94,54 @@ const buildStoreAllocationPlan = async ({
   let remaining = receivedQuantity;
   const rawAllocations = [];
 
-  // Priority 1: bù thiếu tối thiểu cho các store đang dưới ngưỡng minStock
   for (const store of stores) {
     if (remaining <= 0) break;
 
     const inventory = inventoryByStore.get(String(store._id));
     const currentQuantity = Number(inventory?.quantity) || 0;
     const minStock = Number(inventory?.minStock ?? DEFAULT_STORE_MIN_STOCK);
-    const minTarget = Number.isFinite(minStock) && minStock > 0 ? Math.floor(minStock) : DEFAULT_STORE_MIN_STOCK;
+    const minTarget =
+      Number.isFinite(minStock) && minStock > 0
+        ? Math.floor(minStock)
+        : DEFAULT_STORE_MIN_STOCK;
     const deficit = Math.max(0, minTarget - currentQuantity);
 
     if (deficit <= 0) continue;
 
-    const allocate = Math.min(deficit, remaining);
-    rawAllocations.push({ storeId: store._id, quantity: allocate });
-    remaining -= allocate;
+    const allocation = Math.min(deficit, remaining);
+    rawAllocations.push({ storeId: store._id, quantity: allocation });
+    remaining -= allocation;
   }
 
-  // Priority 2: chia phần còn lại theo năng lực xử lý đơn hàng của từng store
   if (remaining > 0) {
     const weightedStores = stores.map((store) => ({
       storeId: store._id,
       weight: Math.max(1, Number(store.capacity?.maxOrdersPerDay) || 100),
     }));
-
     const totalWeight =
       weightedStores.reduce((sum, item) => sum + item.weight, 0) || 1;
     const remainingBeforeWeighted = remaining;
-    let allocatedInWeightedPass = 0;
+    let weightedAllocated = 0;
 
     for (let index = 0; index < weightedStores.length; index += 1) {
       if (remaining <= 0) break;
 
       const isLast = index === weightedStores.length - 1;
-      let allocate = isLast
-        ? remainingBeforeWeighted - allocatedInWeightedPass
+      let allocation = isLast
+        ? remainingBeforeWeighted - weightedAllocated
         : Math.floor(
             (remainingBeforeWeighted * weightedStores[index].weight) / totalWeight
           );
 
-      allocate = Math.min(allocate, remaining);
-      if (allocate <= 0) continue;
+      allocation = Math.min(allocation, remaining);
+      if (allocation <= 0) continue;
 
       rawAllocations.push({
         storeId: weightedStores[index].storeId,
-        quantity: allocate,
+        quantity: allocation,
       });
-
-      allocatedInWeightedPass += allocate;
-      remaining -= allocate;
+      weightedAllocated += allocation;
+      remaining -= allocation;
     }
 
     if (remaining > 0 && weightedStores.length > 0) {
@@ -149,7 +149,6 @@ const buildStoreAllocationPlan = async ({
         storeId: weightedStores[0].storeId,
         quantity: remaining,
       });
-      remaining = 0;
     }
   }
 
@@ -176,11 +175,10 @@ const syncStoreInventory = async ({
   productId,
   variantSku,
   receivedQuantity,
+  pricingSnapshot = null,
   session,
 }) => {
-  if (!productId || !variantSku || receivedQuantity <= 0) {
-    return [];
-  }
+  if (!productId || !variantSku || receivedQuantity <= 0) return [];
 
   const allocationPlan = await buildStoreAllocationPlan({
     productId,
@@ -212,7 +210,7 @@ const syncStoreInventory = async ({
       (Number(storeInventory.quantity) || 0) + allocation.quantity;
     storeInventory.lastRestockDate = new Date();
     storeInventory.lastRestockQuantity = allocation.quantity;
-
+    applyPricingSnapshotToDocument(storeInventory, pricingSnapshot || {});
     await storeInventory.save({ session });
 
     distribution.push({
@@ -238,23 +236,72 @@ const generateGrnNumber = async ({ session, storeCode }) => {
 
   for (let attempt = 0; attempt < 5; attempt += 1) {
     const candidate = `${prefix}${String(sequence).padStart(4, "0")}`;
-    // eslint-disable-next-line no-await-in-loop
     const existing = await GoodsReceipt.findOne({ grnNumber: candidate })
       .select("_id")
       .session(session);
-    if (!existing) {
-      return candidate;
-    }
+    if (!existing) return candidate;
     sequence += 1;
   }
 
   return `${prefix}${Date.now()}`;
 };
 
-/**
- * Bắt đầu nhận hàng từ PO
- * POST /api/warehouse/goods-receipt/start
- */
+const resolveReceiptSnapshot = async ({
+  poItem,
+  storeId,
+  poNumber,
+  session,
+}) => {
+  const [inventorySnapshot, latestMovement, variant] = await Promise.all([
+    Inventory.findOne({
+      storeId,
+      sku: poItem.sku,
+    })
+      .sort({ updatedAt: -1 })
+      .session(session),
+    StockMovement.findOne({
+      storeId,
+      sku: poItem.sku,
+      referenceType: "PO",
+      referenceId: poNumber,
+    })
+      .sort({ createdAt: -1 })
+      .session(session),
+    UniversalVariant.findOne({
+      sku: poItem.sku,
+      productId: poItem.productId,
+    }).session(session),
+  ]);
+
+  const variantSnapshot = variant
+    ? resolveVariantPricingSnapshot(variant)
+    : {
+        basePrice: 0,
+        originalPrice: 0,
+        sellingPrice: 0,
+        costPrice: 0,
+        price: 0,
+      };
+
+  const movementSnapshot = latestMovement
+    ? {
+        basePrice: Number(latestMovement.basePrice) || variantSnapshot.basePrice,
+        originalPrice:
+          Number(latestMovement.originalPrice) || variantSnapshot.originalPrice,
+        sellingPrice:
+          Number(latestMovement.sellingPrice) || variantSnapshot.sellingPrice,
+        costPrice: Number(latestMovement.costPrice) || variantSnapshot.costPrice,
+        price: Number(latestMovement.price) || variantSnapshot.price,
+      }
+    : variantSnapshot;
+
+  return {
+    inventorySnapshot,
+    latestMovement,
+    snapshot: movementSnapshot,
+  };
+};
+
 export const startGoodsReceipt = async (req, res) => {
   try {
     const { poId, poNumber } = req.body;
@@ -269,14 +316,14 @@ export const startGoodsReceipt = async (req, res) => {
     if (!po) {
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy đơn đặt hàng",
+        message: "Khong tim thay don dat hang",
       });
     }
 
     if (!RECEIVABLE_PO_STATUSES.has(po.status)) {
       return res.status(400).json({
         success: false,
-        message: "Đơn hàng chưa sẵn sàng để nhận hàng",
+        message: "Don hang chua san sang de nhan hang",
       });
     }
 
@@ -289,6 +336,11 @@ export const startGoodsReceipt = async (req, res) => {
         const afterSalesContext = await resolveAfterSalesConfigByProductId({
           productId: item.productId,
         });
+        const variant = await UniversalVariant.findOne({
+          sku: item.sku,
+          productId: item.productId,
+        }).lean();
+        const snapshot = resolveVariantPricingSnapshot(variant || {});
 
         return {
           sku: item.sku,
@@ -298,6 +350,10 @@ export const startGoodsReceipt = async (req, res) => {
           receivedQuantity: item.receivedQuantity,
           damagedQuantity: item.damagedQuantity || 0,
           remainingQuantity,
+          unitPrice: Number(item.unitPrice) || 0,
+          costPrice: Number(item.unitPrice) || 0,
+          basePrice: snapshot.basePrice,
+          sellingPrice: snapshot.sellingPrice,
           serializedTrackingEnabled: Boolean(
             afterSalesContext && isSerializedConfig(afterSalesContext.config)
           ),
@@ -317,19 +373,14 @@ export const startGoodsReceipt = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error starting goods receipt:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi khi bắt đầu nhận hàng",
+      message: "Loi khi bat dau nhan hang",
       error: error.message,
     });
   }
 };
 
-/**
- * Nhận hàng từng SKU
- * POST /api/warehouse/goods-receipt/receive-item
- */
 export const receiveItem = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -345,6 +396,7 @@ export const receiveItem = async (req, res) => {
       damagedQuantity = 0,
       locationCode,
       qualityStatus = "GOOD",
+      sellingPrice,
       notes,
       serializedUnits = [],
     } = req.body;
@@ -355,13 +407,13 @@ export const receiveItem = async (req, res) => {
     const normalizedSku = String(sku || "").trim();
     const normalizedLocationCode = String(locationCode || "").trim();
     const normalizedQualityStatus = normalizeQualityStatus(qualityStatus);
+    const inboundSellingPrice = toNonNegativeMoney(sellingPrice);
 
     if (!poId || !normalizedSku || !normalizedLocationCode || !receiveQty) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message:
-          "Dữ liệu nhận hàng không hợp lệ (poId, sku, receivedQuantity, locationCode)",
+        message: "Du lieu nhan hang khong hop le",
       });
     }
 
@@ -369,7 +421,7 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Số lượng hư hỏng không hợp lệ",
+        message: "So luong hu hong khong hop le",
       });
     }
 
@@ -378,7 +430,7 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy đơn đặt hàng",
+        message: "Khong tim thay don dat hang",
       });
     }
 
@@ -386,7 +438,7 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Đơn hàng không ở trạng thái có thể nhận",
+        message: "Don hang khong o trang thai co the nhan",
       });
     }
 
@@ -395,20 +447,20 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy SKU trong đơn hàng",
+        message: "Khong tim thay SKU trong don hang",
       });
     }
 
     const remainingQuantity = Math.max(
       0,
-      (Number(poItem.orderedQuantity) || 0) - (Number(poItem.receivedQuantity) || 0)
+      (Number(poItem.orderedQuantity) || 0) -
+        (Number(poItem.receivedQuantity) || 0)
     );
-
     if (remainingQuantity <= 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "SKU này đã nhận đủ theo đơn hàng",
+        message: "SKU nay da nhan du theo don hang",
       });
     }
 
@@ -416,7 +468,7 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: `Số lượng nhận vượt quá còn lại (${remainingQuantity})`,
+        message: `So luong nhan vuot qua con lai (${remainingQuantity})`,
       });
     }
 
@@ -425,6 +477,15 @@ export const receiveItem = async (req, res) => {
       damagedQuantity: damagedQty,
       qualityStatus: normalizedQualityStatus,
     });
+    const costPrice = Number(poItem.unitPrice) || 0;
+
+    if (sellableQuantity > 0 && (inboundSellingPrice === null || inboundSellingPrice <= 0)) {
+      await session.abortTransaction();
+      return res.status(400).json({
+        success: false,
+        message: "Selling price is required for sellable quantity",
+      });
+    }
 
     const afterSalesContext = await resolveAfterSalesConfigByProductId({
       productId: poItem.productId,
@@ -444,6 +505,18 @@ export const receiveItem = async (req, res) => {
       }
     }
 
+    const variant = await UniversalVariant.findOne({
+      sku: normalizedSku,
+      productId: poItem.productId,
+    }).session(session);
+    if (!variant) {
+      await session.abortTransaction();
+      return res.status(404).json({
+        success: false,
+        message: `Khong tim thay bien the SKU: ${normalizedSku}`,
+      });
+    }
+
     const inventoryQuantityDelta =
       normalizedQualityStatus === "GOOD" ? sellableQuantity : receiveQty;
 
@@ -452,12 +525,11 @@ export const receiveItem = async (req, res) => {
       locationCode: normalizedLocationCode,
       status: "ACTIVE",
     }).session(session);
-
     if (!location) {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy vị trí kho",
+        message: "Khong tim thay vi tri kho",
       });
     }
 
@@ -467,9 +539,18 @@ export const receiveItem = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Vị trí kho không đủ chỗ",
+        message: "Vi tri kho khong du cho",
       });
     }
+
+    const { variant: pricedVariant, snapshot } = await updateCurrentPricingForSku({
+      productId: poItem.productId,
+      variantSku: normalizedSku,
+      variantId: variant._id,
+      costPrice,
+      sellingPrice: sellableQuantity > 0 ? inboundSellingPrice : undefined,
+      session,
+    });
 
     let inventory = await Inventory.findOne({
       storeId: activeStoreId,
@@ -477,15 +558,7 @@ export const receiveItem = async (req, res) => {
       locationId: location._id,
     }).session(session);
 
-    if (inventory) {
-      inventory.quantity = (Number(inventory.quantity) || 0) + inventoryQuantityDelta;
-      inventory.lastReceived = new Date();
-      inventory.status = normalizedQualityStatus;
-      if (notes !== undefined) {
-        inventory.notes = String(notes || "").trim();
-      }
-      await inventory.save({ session });
-    } else {
+    if (!inventory) {
       inventory = new Inventory({
         storeId: activeStoreId,
         sku: normalizedSku,
@@ -493,38 +566,56 @@ export const receiveItem = async (req, res) => {
         productName: poItem.productName,
         locationId: location._id,
         locationCode: location.locationCode,
-        quantity: inventoryQuantityDelta,
-        lastReceived: new Date(),
+        quantity: 0,
         status: normalizedQualityStatus,
         notes: String(notes || "").trim(),
       });
-      await inventory.save({ session });
     }
+
+    inventory.quantity = (Number(inventory.quantity) || 0) + inventoryQuantityDelta;
+    inventory.lastReceived = new Date();
+    inventory.status = normalizedQualityStatus;
+    inventory.notes = String(notes || "").trim();
+    applyPricingSnapshotToDocument(inventory, snapshot);
+    await inventory.save({ session });
 
     location.currentLoad = currentLoad + inventoryQuantityDelta;
     await location.save({ session });
 
-    const movement = new StockMovement({
-      storeId: activeStoreId,
-      type: "INBOUND",
-      sku: normalizedSku,
-      productId: poItem.productId,
-      productName: poItem.productName,
-      toLocationId: location._id,
-      toLocationCode: location.locationCode,
-      quantity: receiveQty,
-      referenceType: "PO",
-      referenceId: po.poNumber,
-      performedBy: req.user._id,
-      performedByName: actorName,
-      qualityStatus: normalizedQualityStatus,
-      notes: String(notes || "").trim(),
-    });
-    await movement.save({ session });
+    const movementSnapshot =
+      sellableQuantity > 0
+        ? snapshot
+        : {
+            ...snapshot,
+            price: 0,
+            sellingPrice: 0,
+          };
+
+    await StockMovement.create(
+      [
+        {
+          storeId: activeStoreId,
+          type: "INBOUND",
+          sku: normalizedSku,
+          productId: poItem.productId,
+          productName: poItem.productName,
+          toLocationId: location._id,
+          toLocationCode: location.locationCode,
+          quantity: receiveQty,
+          referenceType: "PO",
+          referenceId: po.poNumber,
+          performedBy: req.user._id,
+          performedByName: actorName,
+          qualityStatus: normalizedQualityStatus,
+          notes: String(notes || "").trim(),
+          ...movementSnapshot,
+        },
+      ],
+      { session }
+    );
 
     poItem.receivedQuantity = (Number(poItem.receivedQuantity) || 0) + receiveQty;
     poItem.damagedQuantity = (Number(poItem.damagedQuantity) || 0) + damagedQty;
-
     const hasAnyReceived = po.items.some(
       (item) => (Number(item.receivedQuantity) || 0) > 0
     );
@@ -536,28 +627,18 @@ export const receiveItem = async (req, res) => {
     let variantStockAfter = null;
     let distributedToStores = [];
     let registeredDevices = 0;
+    let productStatusAfter = null;
 
     if (sellableQuantity > 0) {
-      const variant = await UniversalVariant.findOne({
-        sku: normalizedSku,
-      }).session(session);
-
-      if (!variant) {
-        await session.abortTransaction();
-        return res.status(404).json({
-          success: false,
-          message: `Không tìm thấy biến thể SKU: ${normalizedSku}`,
-        });
-      }
-
-      variant.stock = (Number(variant.stock) || 0) + sellableQuantity;
-      await variant.save({ session });
-      variantStockAfter = variant.stock;
+      pricedVariant.stock = (Number(pricedVariant.stock) || 0) + sellableQuantity;
+      await pricedVariant.save({ session });
+      variantStockAfter = pricedVariant.stock;
 
       distributedToStores = await syncStoreInventory({
-        productId: variant.productId,
+        productId: pricedVariant.productId,
         variantSku: normalizedSku,
         receivedQuantity: sellableQuantity,
+        pricingSnapshot: snapshot,
         session,
       });
 
@@ -566,11 +647,15 @@ export const receiveItem = async (req, res) => {
           storeId: activeStoreId,
           warehouseLocationId: location._id,
           warehouseLocationCode: location.locationCode,
-          productId: variant.productId,
-          variantId: variant._id,
+          productId: pricedVariant.productId,
+          variantId: pricedVariant._id,
           variantSku: normalizedSku,
           productName: poItem.productName,
-          variantName: variant.variantName || "",
+          variantName: pricedVariant.variantName || "",
+          basePrice: snapshot.basePrice,
+          originalPrice: snapshot.originalPrice,
+          sellingPrice: snapshot.sellingPrice,
+          costPrice: snapshot.costPrice,
           serializedUnits,
           notes,
           actor: req.user,
@@ -578,13 +663,19 @@ export const receiveItem = async (req, res) => {
         });
         registeredDevices = createdDevices.length;
       }
+
+      const recalculatedProduct = await recalculateProductAvailability({
+        productId: poItem.productId,
+        session,
+      });
+      productStatusAfter = recalculatedProduct?.status || null;
     }
 
     await session.commitTransaction();
 
     res.json({
       success: true,
-      message: "Đã nhận hàng thành công",
+      message: "Da nhan hang thanh cong",
       inventory,
       location: {
         locationCode: location.locationCode,
@@ -595,18 +686,19 @@ export const receiveItem = async (req, res) => {
       sync: {
         inventoryQuantityDelta,
         sellableQuantity,
+        pricingSnapshot: snapshot,
         variantStockAfter,
         distributedToStores,
         serializedTrackingEnabled,
         registeredDevices,
+        productStatusAfter,
       },
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Error receiving item:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi khi nhận hàng",
+      message: "Loi khi nhan hang",
       error: error.message,
     });
   } finally {
@@ -614,10 +706,6 @@ export const receiveItem = async (req, res) => {
   }
 };
 
-/**
- * Hoàn tất nhận hàng và tạo GRN
- * POST /api/warehouse/goods-receipt/complete
- */
 export const completeGoodsReceipt = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -630,12 +718,11 @@ export const completeGoodsReceipt = async (req, res) => {
     });
 
     const { poId, deliverySignature, notes } = req.body;
-
     if (!poId) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Thiếu poId",
+        message: "Thieu poId",
       });
     }
 
@@ -644,7 +731,7 @@ export const completeGoodsReceipt = async (req, res) => {
       await session.abortTransaction();
       return res.status(404).json({
         success: false,
-        message: "Không tìm thấy đơn đặt hàng",
+        message: "Khong tim thay don dat hang",
       });
     }
 
@@ -652,7 +739,7 @@ export const completeGoodsReceipt = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Đơn đặt hàng đã hoàn tất trước đó",
+        message: "Don dat hang da hoan tat truoc do",
       });
     }
 
@@ -660,19 +747,18 @@ export const completeGoodsReceipt = async (req, res) => {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Đơn hàng không ở trạng thái có thể hoàn tất nhận",
+        message: "Don hang khong o trang thai co the hoan tat nhan",
       });
     }
 
     const receivedPoItems = po.items.filter(
       (item) => (Number(item.receivedQuantity) || 0) > 0
     );
-
     if (receivedPoItems.length === 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Đơn hàng chưa có SKU nào được nhận",
+        message: "Don hang chua co SKU nao duoc nhan",
       });
     }
 
@@ -680,29 +766,25 @@ export const completeGoodsReceipt = async (req, res) => {
       session,
       storeCode: activeStore.code,
     });
+
     const receivedItems = [];
     let totalQuantity = 0;
     let totalDamaged = 0;
 
     for (const poItem of receivedPoItems) {
-      // Lấy snapshot vị trí gần nhất để ghi trên GRN.
-      // Luồng hiện tại nhận mỗi SKU theo một location trong 1 lần xử lý.
-      // eslint-disable-next-line no-await-in-loop
-      const inventorySnapshot = await Inventory.findOne({
-        storeId: activeStoreId,
-        sku: poItem.sku,
-      })
-        .sort({ updatedAt: -1 })
-        .session(session);
-
-      if (!inventorySnapshot) {
-        throw new Error(
-          `Không tìm thấy tồn kho cho SKU ${poItem.sku}. Vui lòng nhận hàng trước khi hoàn tất.`
-        );
-      }
+      const { inventorySnapshot, latestMovement, snapshot } = await resolveReceiptSnapshot(
+        {
+          poItem,
+          storeId: activeStoreId,
+          poNumber: po.poNumber,
+          session,
+        }
+      );
 
       const receivedQty = Number(poItem.receivedQuantity) || 0;
       const damagedQty = Number(poItem.damagedQuantity) || 0;
+      const sellableQuantity = Math.max(0, receivedQty - damagedQty);
+      const unitPrice = Number(poItem.unitPrice) || 0;
 
       receivedItems.push({
         sku: poItem.sku,
@@ -711,11 +793,18 @@ export const completeGoodsReceipt = async (req, res) => {
         orderedQuantity: poItem.orderedQuantity,
         receivedQuantity: receivedQty,
         damagedQuantity: damagedQty,
-        locationId: inventorySnapshot.locationId,
-        locationCode: inventorySnapshot.locationCode,
-        qualityStatus: inventorySnapshot.status || "GOOD",
-        unitPrice: poItem.unitPrice,
-        totalPrice: receivedQty * (Number(poItem.unitPrice) || 0),
+        locationId:
+          inventorySnapshot?.locationId || latestMovement?.toLocationId || null,
+        locationCode:
+          inventorySnapshot?.locationCode || latestMovement?.toLocationCode || "",
+        qualityStatus:
+          inventorySnapshot?.status || latestMovement?.qualityStatus || "GOOD",
+        unitPrice,
+        costPrice: unitPrice,
+        basePrice: Number(snapshot.basePrice) || 0,
+        originalPrice: Number(snapshot.originalPrice) || Number(snapshot.basePrice) || 0,
+        sellingPrice: sellableQuantity > 0 ? Number(snapshot.sellingPrice) || 0 : 0,
+        totalPrice: receivedQty * unitPrice,
       });
 
       totalQuantity += receivedQty;
@@ -741,7 +830,9 @@ export const completeGoodsReceipt = async (req, res) => {
     await grn.save({ session });
 
     const allReceived = po.items.every(
-      (item) => (Number(item.receivedQuantity) || 0) >= (Number(item.orderedQuantity) || 0)
+      (item) =>
+        (Number(item.receivedQuantity) || 0) >=
+        (Number(item.orderedQuantity) || 0)
     );
 
     po.status = allReceived ? "COMPLETED" : "PARTIAL";
@@ -752,16 +843,15 @@ export const completeGoodsReceipt = async (req, res) => {
 
     res.json({
       success: true,
-      message: "Đã hoàn tất nhận hàng",
+      message: "Da hoan tat nhan hang",
       goodsReceipt: grn,
       purchaseOrder: po,
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("Error completing goods receipt:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi khi hoàn tất nhận hàng",
+      message: "Loi khi hoan tat nhan hang",
       error: error.message,
     });
   } finally {
@@ -769,10 +859,6 @@ export const completeGoodsReceipt = async (req, res) => {
   }
 };
 
-/**
- * Lấy danh sách phiếu nhập kho
- * GET /api/warehouse/goods-receipt
- */
 export const getGoodsReceipts = async (req, res) => {
   try {
     const { search, page = 1, limit = 20 } = req.query;
@@ -808,10 +894,9 @@ export const getGoodsReceipts = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("Error getting goods receipts:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi khi lấy danh sách phiếu nhập kho",
+      message: "Loi khi lay danh sach phieu nhap kho",
       error: error.message,
     });
   }

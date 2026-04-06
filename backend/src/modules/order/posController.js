@@ -21,6 +21,16 @@ import {
   notifyOrderManagerPendingInStoreOrder,
   sendOrderStageNotifications,
 } from "../notification/notificationService.js";
+import {
+  recalculateProductAvailability,
+  resolveVariantPricingSnapshot,
+} from "../product/productPricingService.js";
+import {
+  canPurchaseForProductStatus,
+  normalizeProductStatus,
+} from "../product/productPricingConfig.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
+import { hasPermission } from "../../authz/policyEngine.js";
 
 const getModelsByType = () => ({ Product: UniversalProduct, Variant: UniversalVariant });
 
@@ -36,7 +46,34 @@ const buildHttpError = (httpStatus, code, message) => {
 const getActiveBranchIdFromReq = (req) => String(req?.authz?.activeBranchId || "").trim();
 
 const isGlobalAdminRequest = (req) =>
-  Boolean(req?.authz?.isGlobalAdmin || req?.user?.role === "GLOBAL_ADMIN");
+  Boolean(req?.authz?.isGlobalAdmin);
+
+const requestHasPermission = (req, permission, mode = "branch") =>
+  hasPermission(req?.authz, permission, { mode });
+
+const hasBroadPosAccess = (req) =>
+  Boolean(req?.authz?.isGlobalAdmin) ||
+  requestHasPermission(req, AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH, "branch") ||
+  requestHasPermission(req, AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH, "global");
+
+const canReadOwnPosOrders = (req) =>
+  !hasBroadPosAccess(req) &&
+  requestHasPermission(req, AUTHZ_ACTIONS.POS_ORDER_READ_SELF, "self");
+
+const canReadBranchPosOrders = (req) =>
+  requestHasPermission(
+    req,
+    AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH,
+    req?.authz?.isGlobalAdmin ? "global" : "branch",
+  );
+
+const canProcessCashierPayments = (req) =>
+  !req?.authz?.isGlobalAdmin &&
+  requestHasPermission(
+    req,
+    AUTHZ_ACTIONS.POS_PAYMENT_PROCESS,
+    req?.authz?.isGlobalAdmin ? "global" : "branch",
+  );
 
 const ensureActiveBranchContext = (req, { allowGlobalWithoutBranch = false, fallbackBranchId = "" } = {}) => {
   const activeBranchId = getActiveBranchIdFromReq(req);
@@ -143,6 +180,20 @@ const handleError = (res, error, fallbackMessage) => {
   return res.status(status).json(payload);
 };
 
+const recalculateAvailabilityForItems = async (orderItems = [], session) => {
+  const productIds = [
+    ...new Set(
+      (Array.isArray(orderItems) ? orderItems : [])
+        .map((item) => String(item?.productId || "").trim())
+        .filter(Boolean),
+    ),
+  ];
+
+  for (const productId of productIds) {
+    await recalculateProductAvailability({ productId, session });
+  }
+};
+
 export const createPOSOrder = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -201,6 +252,15 @@ export const createPOSOrder = async (req, res) => {
         throw buildHttpError(404, "ORDER_PRODUCT_NOT_FOUND", "Product not found");
       }
 
+      const productStatus = normalizeProductStatus(product.status);
+      if (!canPurchaseForProductStatus(productStatus)) {
+        throw buildHttpError(
+          400,
+          "ORDER_PRODUCT_UNAVAILABLE",
+          `${product.name} is not available for purchase`,
+        );
+      }
+
       if (variant.stock < quantity) {
         throw buildHttpError(
           400,
@@ -216,8 +276,14 @@ export const createPOSOrder = async (req, res) => {
       product.salesCount = (product.salesCount || 0) + quantity;
       await product.save({ session });
 
-      const price = item.price ?? variant.price;
-      const originalPrice = item.originalPrice ?? variant.originalPrice ?? variant.price;
+      const pricingSnapshot = resolveVariantPricingSnapshot(variant);
+      const price = Number(pricingSnapshot.price) || 0;
+      const originalPrice = Number(pricingSnapshot.originalPrice) || price;
+      const basePrice = Number(pricingSnapshot.basePrice) || originalPrice;
+      const costPrice = Number(pricingSnapshot.costPrice) || 0;
+      if (price <= 0) {
+        throw buildHttpError(400, "ORDER_PRICE_INVALID", `${product.name} is missing a live selling price`);
+      }
       const itemTotal = price * quantity;
       subtotal += itemTotal;
 
@@ -240,6 +306,8 @@ export const createPOSOrder = async (req, res) => {
         quantity,
         price,
         originalPrice,
+        basePrice,
+        costPrice,
         total: itemTotal,
         subtotal: itemTotal,
         images,
@@ -295,7 +363,6 @@ export const createPOSOrder = async (req, res) => {
           createdByInfo: {
             userId: req.user._id,
             userName: req.user.fullName || req.user.name,
-            userRole: req.user.role,
           },
         },
       ],
@@ -303,6 +370,7 @@ export const createPOSOrder = async (req, res) => {
     );
 
     await order.save({ session });
+    await recalculateAvailabilityForItems(orderItems, session);
     await session.commitTransaction();
 
     await sendOrderStageNotifications({
@@ -394,7 +462,7 @@ export const getPOSOrderById = async (req, res) => {
 
     assertOrderInActiveBranch(req, order);
 
-    if (req.user.role === "POS_STAFF") {
+    if (canReadOwnPosOrders(req) && !canReadBranchPosOrders(req)) {
       const staffId = String(order?.posInfo?.staffId?._id || order?.posInfo?.staffId || "");
       if (!staffId || staffId !== String(req.user._id)) {
         return res.status(403).json({
@@ -718,6 +786,11 @@ export const cancelPendingOrder = async (req, res) => {
       referenceType: "ORDER",
       referenceId: String(order._id),
     }).session(session);
+    const orderItemBySku = new Map(
+      (Array.isArray(order.items) ? order.items : [])
+        .map((item) => [String(item?.variantSku || "").trim(), item])
+        .filter(([sku]) => sku),
+    );
 
     const restoreBatches = new Map();
     for (const movement of pickMovements) {
@@ -760,9 +833,15 @@ export const cancelPendingOrder = async (req, res) => {
         sku: batch.sku,
         locationId: batch.locationId,
       }).session(session);
+      const orderItem = orderItemBySku.get(String(batch.sku || "").trim());
 
       if (inventory) {
         inventory.quantity += batch.quantity;
+        inventory.basePrice = Number(orderItem?.basePrice) || Number(orderItem?.originalPrice) || 0;
+        inventory.originalPrice = Number(orderItem?.originalPrice) || Number(orderItem?.basePrice) || 0;
+        inventory.sellingPrice = Number(orderItem?.price) || 0;
+        inventory.costPrice = Number(orderItem?.costPrice) || 0;
+        inventory.price = Number(orderItem?.price) || 0;
         await inventory.save({ session });
       } else {
         await Inventory.create(
@@ -775,6 +854,11 @@ export const cancelPendingOrder = async (req, res) => {
               locationId: batch.locationId,
               locationCode: batch.locationCode,
               quantity: batch.quantity,
+              basePrice: Number(orderItem?.basePrice) || Number(orderItem?.originalPrice) || 0,
+              originalPrice: Number(orderItem?.originalPrice) || Number(orderItem?.basePrice) || 0,
+              sellingPrice: Number(orderItem?.price) || 0,
+              costPrice: Number(orderItem?.costPrice) || 0,
+              price: Number(orderItem?.price) || 0,
               status: "GOOD",
             },
           ],
@@ -798,6 +882,11 @@ export const cancelPendingOrder = async (req, res) => {
             toLocationId: batch.locationId,
             toLocationCode: batch.locationCode,
             quantity: batch.quantity,
+            basePrice: Number(orderItem?.basePrice) || Number(orderItem?.originalPrice) || 0,
+            originalPrice: Number(orderItem?.originalPrice) || Number(orderItem?.basePrice) || 0,
+            sellingPrice: Number(orderItem?.price) || 0,
+            costPrice: Number(orderItem?.costPrice) || 0,
+            price: Number(orderItem?.price) || 0,
             referenceType: "ORDER",
             referenceId: String(order._id),
             performedBy: req.user._id,
@@ -824,6 +913,8 @@ export const cancelPendingOrder = async (req, res) => {
         await product.save({ session });
       }
     }
+
+    await recalculateAvailabilityForItems(order.items, session);
 
     order.status = "CANCELLED";
     order.cancelledAt = new Date();
@@ -955,7 +1046,7 @@ export const getPOSOrderHistory = async (req, res) => {
       query["assignedStore.storeId"] = activeBranchId;
     }
 
-    if (req.user.role === "POS_STAFF") {
+    if (canReadOwnPosOrders(req) && !canReadBranchPosOrders(req)) {
       query["posInfo.staffId"] = req.user._id;
     }
 
@@ -1015,8 +1106,6 @@ export const getPOSStats = async (req, res) => {
     const activeBranchId = ensureActiveBranchContext(req, { allowGlobalWithoutBranch: true });
     const { startDate, endDate } = req.query;
     const userId = req.user._id;
-    const userRole = req.user.role;
-
     const query = {
       orderSource: "IN_STORE",
     };
@@ -1024,11 +1113,11 @@ export const getPOSStats = async (req, res) => {
       query["assignedStore.storeId"] = activeBranchId;
     }
 
-    if (userRole === "CASHIER") {
+    if (canProcessCashierPayments(req)) {
       query["posInfo.cashierId"] = userId;
     }
 
-    if (userRole === "POS_STAFF") {
+    if (canReadOwnPosOrders(req) && !canReadBranchPosOrders(req)) {
       query["posInfo.staffId"] = userId;
     }
 

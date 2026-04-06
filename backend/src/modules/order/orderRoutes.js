@@ -11,34 +11,15 @@ import { resolveOrderIdFromCarrierPayload } from "./orderAuditAdapter.js";
 
 const router = express.Router();
 
-const ALLOWED_AUDIT_ROLES = new Set([
-  "GLOBAL_ADMIN",
-  "ADMIN",
-  "BRANCH_ADMIN",
-  "ORDER_MANAGER",
-]);
-
-const requireOrderAuditRole = (req, res, next) => {
-  const role = String(req?.user?.role || "").toUpperCase();
-  if (!ALLOWED_AUDIT_ROLES.has(role)) {
-    return res.status(403).json({
-      success: false,
-      code: "AUTHZ_AUDIT_ROLE_DENIED",
-      message: "You do not have permission to access order audit logs",
-    });
-  }
-  return next();
-};
-
 const resolveAuditScopeMode = (req) => {
-  if (req?.authz?.isGlobalAdmin || req?.user?.role === "GLOBAL_ADMIN") {
+  if (req?.authz?.isGlobalAdmin) {
     return "global";
   }
   return "branch";
 };
 
 const resolveOrderWriteScopeMode = (req) => {
-  if (req?.authz?.isGlobalAdmin || req?.user?.role === "GLOBAL_ADMIN") {
+  if (req?.authz?.isGlobalAdmin) {
     return "global";
   }
   return "branch";
@@ -87,19 +68,24 @@ const auditCarrierWebhook = orderAuditMiddleware({
 });
 
 const resolveOrderStatusWriteAction = (req) => {
-  const role = String(req?.user?.role || "").toUpperCase();
-  if (role === "SHIPPER") {
-    return AUTHZ_ACTIONS.TASK_UPDATE;
+  const permissionSet = req?.authz?.permissions instanceof Set ? req.authz.permissions : new Set();
+  if (permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_TASK)) {
+    return AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_TASK;
   }
-  if (role === "WAREHOUSE_MANAGER" || role === "WAREHOUSE_STAFF") {
-    return AUTHZ_ACTIONS.WAREHOUSE_WRITE;
+  if (permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_WAREHOUSE)) {
+    return AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_WAREHOUSE;
   }
-  return AUTHZ_ACTIONS.ORDERS_WRITE;
+  if (permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_POS)) {
+    return AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_POS;
+  }
+  return AUTHZ_ACTIONS.ORDER_STATUS_MANAGE;
 };
 
 const resolveOrderStatusScopeMode = (req) => {
-  const role = String(req?.user?.role || "").toUpperCase();
-  if (role === "SHIPPER") {
+  if (req?.authz?.isGlobalAdmin) {
+    return "global";
+  }
+  if (resolveOrderStatusWriteAction(req) === AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_TASK) {
     return "task";
   }
   return resolveOrderWriteScopeMode(req);
@@ -123,8 +109,7 @@ router.get("/", orderController.getAllOrders);
 router.get("/my-orders", orderController.getAllOrders);
 router.get(
   "/:id/audit-logs",
-  requireOrderAuditRole,
-  authorize(AUTHZ_ACTIONS.ORDERS_READ, {
+  authorize(AUTHZ_ACTIONS.ORDER_AUDIT_READ, {
     scopeMode: resolveAuditScopeMode,
     requireActiveBranchFor: ["branch"],
     resourceType: "ORDER_AUDIT",
@@ -161,7 +146,7 @@ router.put(
 
 router.patch(
   "/:id/assign-carrier",
-  authorize(AUTHZ_ACTIONS.ORDERS_WRITE, {
+  authorize(AUTHZ_ACTIONS.ORDER_ASSIGN_CARRIER, {
     scopeMode: resolveOrderWriteScopeMode,
     requireActiveBranchFor: ["branch"],
     resourceType: "ORDER",
@@ -171,7 +156,7 @@ router.patch(
 );
 router.put(
   "/:id/assign-carrier",
-  authorize(AUTHZ_ACTIONS.ORDERS_WRITE, {
+  authorize(AUTHZ_ACTIONS.ORDER_ASSIGN_CARRIER, {
     scopeMode: resolveOrderWriteScopeMode,
     requireActiveBranchFor: ["branch"],
     resourceType: "ORDER",
@@ -203,7 +188,11 @@ router.put(
 
 router.patch(
   "/:id/assign-store",
-  authorize(AUTHZ_ACTIONS.ORDERS_WRITE, { scopeMode: "global", resourceType: "ORDER" }),
+  authorize(AUTHZ_ACTIONS.ORDER_ASSIGN_STORE, {
+    scopeMode: resolveOrderWriteScopeMode,
+    requireActiveBranchFor: ["branch"],
+    resourceType: "ORDER",
+  }),
   auditAssignBranch,
   orderController.assignStore
 );
@@ -211,7 +200,7 @@ router.patch(
 // ✅ SAFE-CANCEL ROLLBACK: Cho phép admin khôi phục trạng thái trong vòng 2 giờ
 router.post(
   "/:id/revert",
-  authorize(AUTHZ_ACTIONS.ORDERS_WRITE, {
+  authorize(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE, {
     scopeMode: resolveOrderWriteScopeMode,
     requireActiveBranchFor: ["branch"],
     resourceType: "ORDER",

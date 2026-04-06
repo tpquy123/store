@@ -13,6 +13,8 @@ import fs from "fs";
 // ================================
 import authRoutes from "./modules/auth/authRoutes.js";
 import userRoutes from "./modules/auth/userRoutes.js";
+import roleRoutes from "./modules/auth/roleRoutes.js";
+import permissionRoutes from "./modules/auth/permissionRoutes.js";
 import cartRoutes from "./modules/cart/cartRoutes.js";
 import orderRoutes from "./modules/order/orderRoutes.js";
 import reviewRoutes from "./modules/review/reviewRoutes.js";
@@ -30,6 +32,7 @@ import shortVideoRoutes from "./modules/content/shortVideoRoutes.js";
 import brandRoutes from "./modules/brand/brandRoutes.js";
 import productTypeRoutes from "./modules/productType/productTypeRoutes.js";
 import universalProductRoutes from "./modules/product/universalProductRoutes.js";
+import createLegacyProductRouter from "./modules/product/legacyProductRoutes.js";
 import warehouseRoutes from "./modules/warehouse/warehouseRoutes.js";
 import warehouseConfigRoutes from "./modules/warehouse/warehouseConfigRoutes.js";
 import storeRoutes from "./modules/store/storeRoutes.js";
@@ -145,6 +148,8 @@ if (!process.env.VNP_TMN_CODE || !process.env.VNP_HASH_SECRET) {
 // ================================
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
+app.use("/api/roles", roleRoutes);
+app.use("/api/permissions", permissionRoutes);
 app.use("/api/cart", cartRoutes);
 app.use("/api/orders", orderRoutes);
 app.use("/api/reviews", reviewRoutes);
@@ -170,6 +175,13 @@ app.use("/api/short-videos", shortVideoRoutes);
 app.use("/api/brands", brandRoutes);
 app.use("/api/product-types", productTypeRoutes);
 app.use("/api/universal-products", universalProductRoutes);
+// Legacy category endpoints (frontend compatibility)
+app.use("/api/iphones", createLegacyProductRouter("iphones"));
+app.use("/api/ipads", createLegacyProductRouter("ipads"));
+app.use("/api/macs", createLegacyProductRouter("macs"));
+app.use("/api/airpods", createLegacyProductRouter("airpods"));
+app.use("/api/applewatches", createLegacyProductRouter("applewatches"));
+app.use("/api/accessories", createLegacyProductRouter("accessories"));
 
 // ✅ WAREHOUSE MANAGEMENT ROUTES
 app.use("/api/warehouse/config", warehouseConfigRoutes);

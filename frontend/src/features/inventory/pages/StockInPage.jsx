@@ -6,7 +6,7 @@
 import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { api } from "@/shared/lib/http/httpClient";
 import { toast } from "sonner";
-import { formatDate } from "@/shared/lib/utils";
+import { formatDate, formatPrice } from "@/shared/lib/utils";
 import { isSerializedProduct } from "@/features/afterSales/utils/afterSales";
 import {
   PackagePlus,
@@ -314,6 +314,26 @@ const StockInItemCard = ({ item, locations, onUpdate, onRemove }) => (
         />
       </div>
       <div className="space-y-1">
+        <label className="text-xs font-medium text-muted-foreground">Cost</label>
+        <Input
+          type="number"
+          min="0"
+          value={item.costPrice || ""}
+          onChange={(e) => onUpdate(item.sku, "costPrice", e.target.value)}
+          className="h-8 text-right"
+        />
+      </div>
+      <div className="space-y-1">
+        <label className="text-xs font-medium text-muted-foreground">Selling</label>
+        <Input
+          type="number"
+          min="0"
+          value={item.sellingPrice || ""}
+          onChange={(e) => onUpdate(item.sku, "sellingPrice", e.target.value)}
+          className="h-8 text-right"
+        />
+      </div>
+      <div className="space-y-1">
         <label className="text-xs font-medium text-muted-foreground">Ghi chú</label>
         <Input
           placeholder="Ghi chú..."
@@ -491,6 +511,8 @@ const StockInPage = () => {
       {
         ...variant,
         quantity: 1,
+        costPrice: "",
+        sellingPrice: "",
         locationCode: "",
         notes: "",
         serializedInput: "",
@@ -524,6 +546,16 @@ const StockInPage = () => {
         toast.error(`Số lượng không hợp lệ cho SKU: ${item.sku}`);
         return;
       }
+      const costPrice = Number(item.costPrice);
+      const sellingPrice = Number(item.sellingPrice);
+      if (!Number.isFinite(costPrice) || costPrice < 0) {
+        toast.error(`Missing valid cost price for SKU: ${item.sku}`);
+        return;
+      }
+      if (!Number.isFinite(sellingPrice) || sellingPrice <= 0) {
+        toast.error(`Missing valid selling price for SKU: ${item.sku}`);
+        return;
+      }
       if (!item.locationCode) {
         toast.error(`Chưa chọn đầy đủ vị trí kho cho SKU: ${item.sku}`);
         return;
@@ -542,6 +574,8 @@ const StockInPage = () => {
         items: stockInItems.map((item) => ({
           sku: item.sku,
           quantity: Number(item.quantity),
+          costPrice: Number(item.costPrice),
+          sellingPrice: Number(item.sellingPrice),
           locationCode: item.locationCode,
           notes: item.notes || "",
           serializedUnits: item.serializedTrackingEnabled
@@ -756,11 +790,13 @@ const StockInPage = () => {
 
                 {/* Desktop table — horizontally scrollable */}
                 <div className="hidden sm:block rounded-lg border overflow-x-auto">
-                  <Table className="min-w-[980px]">
+                  <Table className="min-w-[1180px]">
                     <TableHeader>
                       <TableRow className="bg-muted/50">
                         <TableHead className="w-[220px]">Sản phẩm</TableHead>
                         <TableHead className="w-[100px]">SKU</TableHead>
+                        <TableHead className="w-[120px]">Cost</TableHead>
+                        <TableHead className="w-[120px]">Selling</TableHead>
                         <TableHead className="w-[90px]">Số lượng</TableHead>
                         <TableHead className="w-[260px]">
                           <div className="flex items-center gap-1">
@@ -804,6 +840,28 @@ const StockInPage = () => {
                           </TableCell>
                           <TableCell>
                             <span className="font-mono text-xs">{item.sku}</span>
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min="0"
+                              value={item.costPrice || ""}
+                              onChange={(e) =>
+                                updateItem(item.sku, "costPrice", e.target.value)
+                              }
+                              className="w-24 h-8 text-right"
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <Input
+                              type="number"
+                              min="0"
+                              value={item.sellingPrice || ""}
+                              onChange={(e) =>
+                                updateItem(item.sku, "sellingPrice", e.target.value)
+                              }
+                              className="w-24 h-8 text-right"
+                            />
                           </TableCell>
                           <TableCell>
                             <Input
@@ -940,11 +998,13 @@ const StockInPage = () => {
                 <>
                   {/* Horizontally scrollable table */}
                   <div className="rounded-lg border overflow-x-auto">
-                    <Table className="min-w-[560px]">
+                    <Table className="min-w-[760px]">
                       <TableHeader>
                         <TableRow className="bg-muted/50">
                           <TableHead className="whitespace-nowrap">Thời gian</TableHead>
                           <TableHead className="whitespace-nowrap">SKU</TableHead>
+                          <TableHead className="whitespace-nowrap">Cost</TableHead>
+                          <TableHead className="whitespace-nowrap">Selling</TableHead>
                           <TableHead className="whitespace-nowrap">Sản phẩm</TableHead>
                           <TableHead className="whitespace-nowrap">Số lượng</TableHead>
                           <TableHead className="whitespace-nowrap">Vị trí</TableHead>
@@ -959,6 +1019,12 @@ const StockInPage = () => {
                             </TableCell>
                             <TableCell>
                               <span className="font-mono text-xs">{mov.sku}</span>
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">
+                              {formatPrice(mov.costPrice || 0)}
+                            </TableCell>
+                            <TableCell className="text-xs whitespace-nowrap">
+                              {formatPrice(mov.sellingPrice || mov.price || 0)}
                             </TableCell>
                             <TableCell className="max-w-[160px] sm:max-w-[200px] truncate text-sm">
                               {mov.productName}

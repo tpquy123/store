@@ -188,7 +188,17 @@ export const getConsolidatedInventory = async (req, res) => {
       if (req.authz?.activeBranchId) {
          match.storeId = new mongoose.Types.ObjectId(req.authz.activeBranchId);
       } else {
-         return res.json({ success: true, inventory: [], summary: { totalSKUs: 0, totalValue: 0, lowStockCount: 0 } });
+         return res.json({
+           success: true,
+           inventory: [],
+           summary: {
+             totalSKUs: 0,
+             totalValue: 0,
+             totalSellValue: 0,
+             totalCostValue: 0,
+             lowStockCount: 0,
+           },
+         });
       }
     }
 
@@ -210,6 +220,11 @@ export const getConsolidatedInventory = async (req, res) => {
           totalQuantity: { $sum: "$quantity" },
           totalReserved: { $sum: "$reserved" },
           totalAvailable: { $sum: "$available" },
+          basePrice: { $max: "$basePrice" },
+          originalPrice: { $max: "$originalPrice" },
+          sellingPrice: { $max: "$sellingPrice" },
+          costPrice: { $max: "$costPrice" },
+          price: { $max: "$price" },
           locations: {
             $push: {
               storeId: "$storeId",
@@ -264,8 +279,11 @@ export const getConsolidatedInventory = async (req, res) => {
             sku: "$variant.sku",
             color: "$variant.color",
             variantName: "$variant.variantName",
-            price: "$variant.price",
-            originalPrice: "$variant.originalPrice",
+            price: { $ifNull: ["$sellingPrice", "$price"] },
+            sellingPrice: { $ifNull: ["$sellingPrice", "$price"] },
+            originalPrice: { $ifNull: ["$basePrice", "$originalPrice"] },
+            basePrice: { $ifNull: ["$basePrice", "$originalPrice"] },
+            costPrice: "$costPrice",
             stock: "$variant.stock",
           },
           product: {
@@ -290,7 +308,13 @@ export const getConsolidatedInventory = async (req, res) => {
 
     const totalValue = inventory.reduce((sum, item) => {
       const qty = Number(item.totalQuantity) || 0;
-      const price = Number(item?.variant?.price) || 0;
+      const price =
+        Number(item?.variant?.sellingPrice ?? item?.variant?.price) || 0;
+      return sum + qty * price;
+    }, 0);
+    const totalCostValue = inventory.reduce((sum, item) => {
+      const qty = Number(item.totalQuantity) || 0;
+      const price = Number(item?.variant?.costPrice) || 0;
       return sum + qty * price;
     }, 0);
 
@@ -300,6 +324,8 @@ export const getConsolidatedInventory = async (req, res) => {
       summary: {
         totalSKUs: inventory.length,
         totalValue,
+        totalSellValue: totalValue,
+        totalCostValue,
         lowStockCount: inventory.filter(
           (item) => Number(item.totalAvailable) < lowStockThreshold
         ).length,
@@ -324,14 +350,6 @@ export const getStoreInventoryComparison = async (req, res) => {
     const stores = await Store.find({ status: "ACTIVE" })
       .select("_id code name type capacity")
       .lean();
-
-    // ✅ Branch Enforcement
-    if (req.user.role !== "GLOBAL_ADMIN") {
-        return res.status(403).json({
-            success: false,
-            message: "Ban khong co quyen xem so sanh ton kho toan he thong",
-        });
-    }
 
     const groupedStats = await StoreInventory.aggregate([
       {

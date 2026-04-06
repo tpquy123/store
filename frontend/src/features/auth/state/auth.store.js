@@ -2,17 +2,11 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 import { authAPI } from "../api/auth.api";
 import { useCartStore } from "@/features/cart";
-
-const BRANCH_SCOPED_ROLES = new Set([
-  "ADMIN",
-  "BRANCH_ADMIN",
-  "WAREHOUSE_MANAGER",
-  "WAREHOUSE_STAFF",
-  "PRODUCT_MANAGER",
-  "ORDER_MANAGER",
-  "POS_STAFF",
-  "CASHIER",
-]);
+import {
+  getPermissionSet,
+  hasPermissionSnapshot,
+  isGlobalAdminAuthorization,
+} from "../lib/authorization";
 
 const normalizeBranchId = (value) => {
   if (!value) return "";
@@ -24,15 +18,18 @@ const normalizeAllowedBranchIds = (authz) => {
   return [...new Set(allowed.map(normalizeBranchId).filter(Boolean))];
 };
 
-const isGlobalAdminContext = (user, authz) => {
-  return Boolean(authz?.isGlobalAdmin || String(user?.role || "").toUpperCase() === "GLOBAL_ADMIN");
-};
+const getAuthorizationPayload = (payload = {}) => payload?.authorization || payload?.authz || null;
+
+const isGlobalAdminContext = (user, authz) =>
+  isGlobalAdminAuthorization({ user, authorization: authz });
 
 const isBranchScopedStaff = (user, authz) => {
   if (isGlobalAdminContext(user, authz)) return false;
-  if (authz?.requiresBranchAssignment === true) return true;
-  return BRANCH_SCOPED_ROLES.has(String(user?.role || "").toUpperCase());
+  return authz?.requiresBranchAssignment === true;
 };
+
+const canManageCart = (authz) =>
+  hasPermissionSnapshot(authz, "cart.manage.self") || getPermissionSet(authz).has("*");
 
 const deriveFixedBranchId = (user, authz) => {
   const allowedBranchIds = normalizeAllowedBranchIds(authz);
@@ -98,6 +95,7 @@ export const useAuthStore = create(
       error: null,
       activeBranchId: null,
       authz: null,
+      authorization: null,
       contextMode: "STANDARD",
       simulatedBranchId: null,
       finishRehydration: () => set({ rehydrating: false }),
@@ -106,11 +104,12 @@ export const useAuthStore = create(
         set({ isLoading: true, error: null });
         try {
           const response = await authAPI.login(credentials);
-          const { user, token, authz } = response.data.data;
+          const { user, token } = response.data.data;
+          const authorization = getAuthorizationPayload(response.data.data);
 
           const activeBranchId = resolveActiveBranchId({
             user,
-            authz,
+            authz: authorization,
             currentActiveBranchId: null,
           });
 
@@ -120,13 +119,14 @@ export const useAuthStore = create(
             isAuthenticated: true,
             isLoading: false,
             activeBranchId,
-            authz: authz || null,
-            contextMode: resolveContextMode(authz),
-            simulatedBranchId: resolveSimulatedBranchId(authz),
+            authz: authorization || null,
+            authorization: authorization || null,
+            contextMode: resolveContextMode(authorization),
+            simulatedBranchId: resolveSimulatedBranchId(authorization),
           });
 
           const cartStore = useCartStore.getState();
-          if (String(user?.role || "").toUpperCase() === "CUSTOMER") {
+          if (canManageCart(authorization)) {
             await cartStore.fetchCartCount(token);
           } else {
             cartStore.resetCartState();
@@ -170,6 +170,7 @@ export const useAuthStore = create(
             error: null,
             activeBranchId: null,
             authz: null,
+            authorization: null,
             contextMode: "STANDARD",
             simulatedBranchId: null,
           });
@@ -186,11 +187,12 @@ export const useAuthStore = create(
 
         try {
           const response = await authAPI.getCurrentUser();
-          const { user, authz } = response.data.data;
+          const { user } = response.data.data;
+          const authorization = getAuthorizationPayload(response.data.data);
 
           const activeBranchId = resolveActiveBranchId({
             user,
-            authz,
+            authz: authorization,
             currentActiveBranchId: get().activeBranchId,
           });
 
@@ -198,13 +200,14 @@ export const useAuthStore = create(
             user,
             isAuthenticated: true,
             activeBranchId,
-            authz: authz || get().authz,
-            contextMode: resolveContextMode(authz || get().authz),
-            simulatedBranchId: resolveSimulatedBranchId(authz || get().authz),
+            authz: authorization || get().authorization || get().authz,
+            authorization: authorization || get().authorization || get().authz,
+            contextMode: resolveContextMode(authorization || get().authorization || get().authz),
+            simulatedBranchId: resolveSimulatedBranchId(authorization || get().authorization || get().authz),
           });
 
           const cartStore = useCartStore.getState();
-          if (String(user?.role || "").toUpperCase() === "CUSTOMER") {
+          if (canManageCart(authorization || get().authorization || get().authz)) {
             await cartStore.fetchCartCount(token);
           } else {
             cartStore.resetCartState();
@@ -218,6 +221,7 @@ export const useAuthStore = create(
             isAuthenticated: false,
             activeBranchId: null,
             authz: null,
+            authorization: null,
             contextMode: "STANDARD",
             simulatedBranchId: null,
           });
@@ -248,12 +252,13 @@ export const useAuthStore = create(
 
         try {
           const response = await authAPI.setSimulatedBranchContext({ branchId: normalized });
-          const nextAuthz = response.data?.data?.authz || authz;
+          const nextAuthz = getAuthorizationPayload(response.data?.data) || authz;
           const nextActiveBranchId =
             normalizeBranchId(nextAuthz?.activeBranchId) || normalized || null;
 
           set({
             authz: nextAuthz || null,
+            authorization: nextAuthz || null,
             activeBranchId: nextActiveBranchId,
             contextMode: resolveContextMode(nextAuthz),
             simulatedBranchId: resolveSimulatedBranchId(nextAuthz) || normalized,
@@ -276,7 +281,7 @@ export const useAuthStore = create(
 
         try {
           const response = await authAPI.clearSimulatedBranchContext();
-          const nextAuthz = response.data?.data?.authz || authz;
+          const nextAuthz = getAuthorizationPayload(response.data?.data) || authz;
           const nextActiveBranchId = resolveActiveBranchId({
             user,
             authz: nextAuthz,
@@ -285,6 +290,7 @@ export const useAuthStore = create(
 
           set({
             authz: nextAuthz || null,
+            authorization: nextAuthz || null,
             activeBranchId: nextActiveBranchId,
             contextMode: resolveContextMode(nextAuthz),
             simulatedBranchId: resolveSimulatedBranchId(nextAuthz),
@@ -328,6 +334,7 @@ export const useAuthStore = create(
         isAuthenticated: state.isAuthenticated,
         activeBranchId: state.activeBranchId,
         authz: state.authz,
+        authorization: state.authorization,
         contextMode: state.contextMode,
         simulatedBranchId: state.simulatedBranchId,
       }),

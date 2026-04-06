@@ -257,7 +257,6 @@ const SearchOverlay = ({ isOpen, onClose }) => {
         search: normalizedQuery,
         limit: 100,
         page: 1,
-        status: "AVAILABLE",
       });
 
       let products = mainResponse?.data?.data?.products || [];
@@ -267,7 +266,6 @@ const SearchOverlay = ({ isOpen, onClose }) => {
           search: tokens[0],
           limit: 60,
           page: 1,
-          status: "AVAILABLE",
         });
 
         const fallbackProducts = fallbackResponse?.data?.data?.products || [];

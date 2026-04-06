@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import { useNavigate, useSearchParams } from "react-router-dom";
 import { Package, SlidersHorizontal, X } from "lucide-react";
-import { iPhoneAPI, iPadAPI, macAPI, airPodsAPI, appleWatchAPI, accessoryAPI, universalProductAPI } from "../api/catalog.api";
+import { productTypeAPI, universalProductAPI } from "../api/catalog.api";
 import {
   Sheet,
   SheetContent,
@@ -20,39 +20,13 @@ import {
   useProductFilters,
 } from "@/features/search";
 
-const LEGACY_API_MAP = {
-  iPhone: iPhoneAPI,
-  iPad: iPadAPI,
-  Mac: macAPI,
-  AirPods: airPodsAPI,
-  AppleWatch: appleWatchAPI,
-  Accessories: accessoryAPI,
-};
-
-const LEGACY_FILTER_OPTIONS = {
-  iPhone: {
-    storage: ["64GB", "128GB", "256GB", "512GB", "1TB"],
-    condition: ["NEW", "LIKE_NEW"],
-  },
-  iPad: {
-    storage: ["64GB", "128GB", "256GB", "512GB", "1TB"],
-    connectivity: ["WiFi", "5G"],
-    condition: ["NEW", "LIKE_NEW"],
-  },
-  Mac: {
-    storage: ["256GB", "512GB", "1TB", "2TB"],
-    ram: ["8GB", "16GB", "24GB", "32GB", "64GB"],
-    condition: ["NEW", "LIKE_NEW"],
-  },
-  AirPods: {
-    condition: ["NEW", "LIKE_NEW"],
-  },
-  AppleWatch: {
-    condition: ["NEW", "LIKE_NEW"],
-  },
-  Accessories: {
-    condition: ["NEW", "LIKE_NEW"],
-  },
+const CATEGORY_TO_TYPE_SLUG = {
+  iPhone: "smartphone",
+  iPad: "tablet",
+  Mac: "laptop",
+  AirPods: "headphone",
+  AppleWatch: "smartwatch",
+  Accessories: "accessories",
 };
 
 const UNIVERSAL_FILTER_OPTIONS = {
@@ -60,7 +34,7 @@ const UNIVERSAL_FILTER_OPTIONS = {
   condition: ["NEW", "LIKE_NEW"],
 };
 
-const LEGACY_DISPLAY_LABELS = {
+const CATEGORY_DISPLAY_LABELS = {
   iPhone: "iPhone",
   iPad: "iPad",
   Mac: "MacBook",
@@ -85,6 +59,33 @@ const parseFilterValues = (rawValue) =>
     .map((item) => item.trim())
     .filter(Boolean);
 
+const logDebug = (label, payload) => {
+  if (!import.meta.env?.DEV) return;
+  if (payload === undefined) {
+    console.info(label);
+    return;
+  }
+  console.info(label, payload);
+};
+
+const logWarn = (label, payload) => {
+  if (!import.meta.env?.DEV) return;
+  if (payload === undefined) {
+    console.warn(label);
+    return;
+  }
+  console.warn(label, payload);
+};
+
+const normalizeText = (value = "") =>
+  String(value)
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .trim();
+
+const isObjectId = (value) => /^[0-9a-fA-F]{24}$/.test(String(value || ""));
+
 const ProductsPage = ({ category: forcedCategory } = {}) => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
@@ -98,16 +99,12 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
   const modelParam = searchParams.get("model") || "";
   const searchQuery = searchParams.get("search") || "";
 
-  const api = isUniversalMode
-    ? universalProductAPI
-    : LEGACY_API_MAP[category] || iPhoneAPI;
-  const fallbackFilters = useMemo(
-    () =>
-      isUniversalMode
-        ? UNIVERSAL_FILTER_OPTIONS
-        : LEGACY_FILTER_OPTIONS[category] || {},
-    [isUniversalMode, category],
-  );
+  const api = universalProductAPI;
+  const fallbackFilters = UNIVERSAL_FILTER_OPTIONS;
+
+  const [productTypes, setProductTypes] = useState([]);
+  const [typesLoaded, setTypesLoaded] = useState(false);
+  const [typesError, setTypesError] = useState(null);
 
   const [allProducts, setAllProducts] = useState([]);
   const [filters, setFilters] = useState({});
@@ -119,6 +116,117 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [mobileFiltersOpen, setMobileFiltersOpen] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+
+    const loadProductTypes = async () => {
+      setTypesError(null);
+      logDebug("[ProductsPage] Loading product types...");
+      try {
+        const response = await productTypeAPI.getPublic({
+          limit: 200,
+          status: "ACTIVE",
+        });
+        const list = response?.data?.data?.productTypes || [];
+        if (mounted) {
+          setProductTypes(list);
+          setTypesLoaded(true);
+          logDebug("[ProductsPage] Product types loaded", {
+            total: list.length,
+            sample: list.slice(0, 5).map((type) => ({
+              id: type?._id,
+              name: type?.name,
+              slug: type?.slug,
+            })),
+          });
+        }
+      } catch (err) {
+        console.error("ProductsPage: failed to load product types", err);
+        if (mounted) {
+          setProductTypes([]);
+          setTypesLoaded(true);
+          setTypesError(err);
+          logWarn("[ProductsPage] Product types load failed", {
+            message: err?.message,
+            status: err?.response?.status,
+            data: err?.response?.data,
+          });
+        }
+      }
+    };
+
+    loadProductTypes();
+
+    return () => {
+      mounted = false;
+    };
+  }, []);
+
+  const resolvedProductType = useMemo(() => {
+    if (!productTypes.length) return null;
+
+    const findProductTypeByKey = (normalizedKey) => {
+      if (!normalizedKey) return null;
+
+      const exactMatch =
+        productTypes.find((type) => {
+          const slug = normalizeText(type?.slug || "");
+          const name = normalizeText(type?.name || "");
+          return slug === normalizedKey || name === normalizedKey;
+        }) || null;
+
+      if (exactMatch) return exactMatch;
+
+      return (
+        productTypes.find((type) => {
+          const slug = normalizeText(type?.slug || "");
+          const name = normalizeText(type?.name || "");
+          return (
+            slug.includes(normalizedKey) ||
+            normalizedKey.includes(slug) ||
+            name.includes(normalizedKey) ||
+            normalizedKey.includes(name)
+          );
+        }) || null
+      );
+    };
+
+    if (productTypeFromQuery) {
+      if (isObjectId(productTypeFromQuery)) {
+        return (
+          productTypes.find(
+            (type) => String(type?._id) === String(productTypeFromQuery)
+          ) || null
+        );
+      }
+
+      return findProductTypeByKey(normalizeText(productTypeFromQuery));
+    }
+
+    const mappedSlug = CATEGORY_TO_TYPE_SLUG[category];
+    if (!mappedSlug) return null;
+
+    return findProductTypeByKey(normalizeText(mappedSlug));
+  }, [productTypes, productTypeFromQuery, category]);
+
+  const resolvedProductTypeId = useMemo(() => {
+    if (isObjectId(productTypeFromQuery)) return productTypeFromQuery;
+    if (resolvedProductType?._id) return String(resolvedProductType._id);
+    return "";
+  }, [productTypeFromQuery, resolvedProductType]);
+
+  useEffect(() => {
+    logDebug("[ProductsPage] Resolved product type", {
+      productTypeFromQuery,
+      category,
+      mappedSlug: CATEGORY_TO_TYPE_SLUG[category] || "",
+      resolvedId: resolvedProductTypeId,
+      resolvedName: resolvedProductType?.name || "",
+      resolvedSlug: resolvedProductType?.slug || "",
+      typesLoaded,
+    });
+  }, [productTypeFromQuery, category, resolvedProductTypeId, resolvedProductType, typesLoaded]);
 
   useEffect(() => {
     const parsedFilters = {};
@@ -143,6 +251,23 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
   }, [searchParams, fallbackFilters]);
 
   const fetchProducts = useCallback(async () => {
+    const shouldDeferFetch =
+      (!productTypeFromQuery && !typesLoaded && Boolean(category)) ||
+      (productTypeFromQuery &&
+        !isObjectId(productTypeFromQuery) &&
+        !typesLoaded);
+
+    if (shouldDeferFetch) {
+      setLoading(true);
+      setError(null);
+      logDebug("[ProductsPage] Defer fetch (waiting product types)", {
+        productTypeFromQuery,
+        category,
+        typesLoaded,
+      });
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -150,14 +275,23 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
       const params = {
         limit: 9999,
         page: 1,
-        status: "AVAILABLE",
       };
 
-      if (isUniversalMode) {
-        params.productType = productTypeFromQuery;
+      if (resolvedProductTypeId) {
+        params.productType = resolvedProductTypeId;
       }
       if (searchQuery) params.search = searchQuery;
       if (modelParam) params.model = modelParam;
+
+      logDebug("[ProductsPage] Fetch products params", {
+        params,
+        productTypeFromQuery,
+        resolvedProductTypeId,
+        resolvedProductTypeName: resolvedProductType?.name || "",
+        category,
+        searchQuery,
+        modelParam,
+      });
 
       const response = await api.getAll(params);
       const products = response?.data?.data?.products;
@@ -165,6 +299,19 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
       if (!Array.isArray(products)) {
         throw new Error("Du lieu tra ve khong hop le");
       }
+
+      logDebug("[ProductsPage] Fetch products response", {
+        received: products.length,
+        total: response?.data?.data?.total,
+        firstProduct: products[0]
+          ? {
+              id: products[0]?._id,
+              name: products[0]?.name,
+              productType: products[0]?.productType?.name || "",
+              productTypeId: products[0]?.productType?._id || "",
+            }
+          : null,
+      });
 
       setAllProducts(products);
     } catch (fetchError) {
@@ -175,14 +322,53 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
         "Khong the tai san pham";
       setError(message);
       setAllProducts([]);
+      logWarn("[ProductsPage] Fetch products failed", {
+        message,
+        status: fetchError?.response?.status,
+        data: fetchError?.response?.data,
+        url: fetchError?.config?.url,
+      });
     } finally {
       setLoading(false);
     }
-  }, [api, isUniversalMode, productTypeFromQuery, searchQuery, modelParam]);
+  }, [
+    api,
+    resolvedProductTypeId,
+    searchQuery,
+    modelParam,
+    productTypeFromQuery,
+    typesLoaded,
+    category,
+  ]);
 
   useEffect(() => {
     fetchProducts();
   }, [fetchProducts]);
+
+  useEffect(() => {
+    if (!loading && !error && allProducts.length === 0) {
+      logWarn("[ProductsPage] No products after fetch", {
+        productTypeFromQuery,
+        resolvedProductTypeId,
+        category,
+        searchQuery,
+        modelParam,
+        typesLoaded,
+        typesError: typesError?.message,
+      });
+    }
+  }, [
+    allProducts.length,
+    loading,
+    error,
+    productTypeFromQuery,
+    resolvedProductTypeId,
+    category,
+    searchQuery,
+    modelParam,
+    typesLoaded,
+    typesError,
+  ]);
 
   const { filteredProducts, effectiveFilters, activeFiltersCount } =
     useProductFilters({
@@ -191,6 +377,27 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
       priceRange,
       fallbackFilters,
     });
+
+  useEffect(() => {
+    if (!import.meta.env?.DEV) return;
+    if (loading) return;
+    logDebug("[ProductsPage] Filter summary", {
+      totalFetched: allProducts.length,
+      filtered: filteredProducts.length,
+      activeFiltersCount,
+      filters,
+      priceRange,
+      sortBy,
+    });
+  }, [
+    allProducts.length,
+    filteredProducts.length,
+    activeFiltersCount,
+    filters,
+    priceRange,
+    sortBy,
+    loading,
+  ]);
 
   const sortedProducts = useMemo(
     () => sortProductsByOption(filteredProducts, sortBy),
@@ -324,8 +531,11 @@ const ProductsPage = ({ category: forcedCategory } = {}) => {
   );
 
   const categoryLabel = isUniversalMode
-    ? productTypeNameFromQuery || allProducts?.[0]?.productType?.name || "San pham"
-    : LEGACY_DISPLAY_LABELS[category] || category;
+    ? productTypeNameFromQuery ||
+      resolvedProductType?.name ||
+      allProducts?.[0]?.productType?.name ||
+      "San pham"
+    : CATEGORY_DISPLAY_LABELS[category] || category;
 
   return (
     <div className="min-h-screen bg-gray-50">

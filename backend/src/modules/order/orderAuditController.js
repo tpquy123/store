@@ -28,7 +28,7 @@ const parseDateFilter = (value, fieldName) => {
 };
 
 const isGlobalAdminRequest = (req) => {
-  return Boolean(req?.authz?.isGlobalAdmin || req?.user?.role === "GLOBAL_ADMIN");
+  return Boolean(req?.authz?.isGlobalAdmin);
 };
 
 const getEffectiveBranchFilter = (req) => {

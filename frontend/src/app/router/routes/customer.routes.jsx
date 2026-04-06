@@ -12,7 +12,7 @@ const customerRoutes = (
     <Route
       path="/cart"
       element={
-        <ProtectedRoute allowedRoles={["CUSTOMER"]}>
+        <ProtectedRoute allowedPermissions={["cart.manage.self"]}>
           <CartPage />
         </ProtectedRoute>
       }
@@ -20,7 +20,7 @@ const customerRoutes = (
     <Route
       path="/cart/checkout"
       element={
-        <ProtectedRoute allowedRoles={["CUSTOMER"]}>
+        <ProtectedRoute allowedPermissions={["cart.manage.self", "promotion.apply.self"]}>
           <CheckoutPage />
         </ProtectedRoute>
       }
@@ -28,7 +28,7 @@ const customerRoutes = (
     <Route
       path="/orders/:id"
       element={
-        <ProtectedRoute allowedRoles={["CUSTOMER"]}>
+        <ProtectedRoute allowedPermissions={["order.view.self"]}>
           <OrderDetailPage />
         </ProtectedRoute>
       }
@@ -36,7 +36,9 @@ const customerRoutes = (
     <Route
       path="/profile"
       element={
-        <ProtectedRoute allowedRoles={["CUSTOMER"]}>
+        <ProtectedRoute
+          allowedPermissions={["account.profile.update.self", "account.address.manage.self"]}
+        >
           <ProfilePage />
         </ProtectedRoute>
       }

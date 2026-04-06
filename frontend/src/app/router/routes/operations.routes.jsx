@@ -11,7 +11,9 @@ const operationsRoutes = (
   <>
     <Route
       element={
-        <ProtectedRoute allowedRoles={["ORDER_MANAGER", "ADMIN"]}>
+        <ProtectedRoute
+          allowedPermissions={["orders.read", "order.status.manage", "order.audit.read"]}
+        >
           <DashboardLayout />
         </ProtectedRoute>
       }
@@ -21,7 +23,9 @@ const operationsRoutes = (
 
     <Route
       element={
-        <ProtectedRoute allowedRoles={["POS_STAFF", "ADMIN"]}>
+        <ProtectedRoute
+          allowedPermissions={["pos.order.create", "pos.order.read.self", "pos.order.read.branch"]}
+        >
           <DashboardLayout />
         </ProtectedRoute>
       }
@@ -33,7 +37,14 @@ const operationsRoutes = (
 
     <Route
       element={
-        <ProtectedRoute allowedRoles={["CASHIER", "ADMIN"]}>
+        <ProtectedRoute
+          allowedPermissions={[
+            "pos.order.read.branch",
+            "pos.payment.process",
+            "pos.order.finalize",
+            "pos.vat.issue",
+          ]}
+        >
           <DashboardLayout />
         </ProtectedRoute>
       }
@@ -46,7 +57,9 @@ const operationsRoutes = (
 
     <Route
       element={
-        <ProtectedRoute allowedRoles={["SHIPPER", "ADMIN"]}>
+        <ProtectedRoute
+          allowedPermissions={["task.read", "task.update", "order.view.assigned", "order.status.manage.task"]}
+        >
           <DashboardLayout />
         </ProtectedRoute>
       }

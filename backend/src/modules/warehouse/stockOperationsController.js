@@ -17,6 +17,8 @@ import {
   assignDevicesToOrderItem,
   resolveSerializedItemFlags,
 } from "../device/deviceService.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
+import { hasPermission } from "../../authz/policyEngine.js";
 
 const getActorName = (user) =>
   user?.fullName?.trim() || user?.name?.trim() || user?.email?.trim() || "Unknown";
@@ -28,6 +30,8 @@ const toPositiveInteger = (value) => {
 };
 
 const normalizeSku = (value) => String(value || "").trim();
+const requestHasPermission = (req, permission, mode = "branch") =>
+  hasPermission(req?.authz, permission, { mode });
 
 const sumQuantityBySku = (items = [], skuSelector) => {
   const result = new Map();
@@ -246,7 +250,7 @@ export const pickItem = async (req, res) => {
       const assignedPickerId = order?.pickerInfo?.pickerId?.toString();
       const actorId = req.user?._id?.toString();
 
-      if (!["WAREHOUSE_MANAGER", "ADMIN", "GLOBAL_ADMIN"].includes(req.user?.role)) {
+      if (!requestHasPermission(req, AUTHZ_ACTIONS.ORDER_PICK_COMPLETE_INSTORE, "branch")) {
         await session.abortTransaction();
         return res.status(403).json({
           success: false,

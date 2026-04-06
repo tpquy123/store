@@ -123,9 +123,9 @@ test("KILL-SWITCH: action denied on branch not in allowedBranchIds", () => {
 });
 
 // ============================================
-// TEST 5: Empty branchAssignments + legacy role fallback only if no V2 data
+// TEST 5: Empty assignments must not fall back to legacy single-role grants
 // ============================================
-test("KILL-SWITCH: legacy role granted only when systemRoles and branchAssignments are both empty", () => {
+test("KILL-SWITCH: legacy single-role fallback is disabled when scoped assignments are missing", () => {
   const authz = buildContext({
     role: "ADMIN",
     systemRoles: [],
@@ -133,10 +133,9 @@ test("KILL-SWITCH: legacy role granted only when systemRoles and branchAssignmen
     activeBranchId: "",
   });
 
-  // Legacy fallback kicks in since both systemRoles and branchAssignments are empty
   assert.ok(
-    authz.permissions.has(AUTHZ_ACTIONS.ORDERS_READ),
-    "Legacy ADMIN should still have ORDERS_READ as fallback"
+    !authz.permissions.has(AUTHZ_ACTIONS.ORDERS_READ),
+    "Legacy ADMIN should not retain branch grants without canonical assignments"
   );
 });
 

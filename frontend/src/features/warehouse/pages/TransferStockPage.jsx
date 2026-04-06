@@ -36,7 +36,7 @@ import { toast } from "sonner";
 import { api } from "@/shared/lib/http/httpClient";
 import { stockTransferAPI } from "@/features/inventory";
 import { storeAPI } from "@/features/stores";
-import { useAuthStore } from "@/features/auth";
+import { usePermission } from "@/features/auth";
 
 const TRANSFER_REASONS = [
   { value: "RESTOCK", label: "Bổ sung hàng" },
@@ -119,18 +119,14 @@ const summarizeTransfers = (transfers = []) =>
     }
   );
 
-const TransferStockPage = () => {
+  const TransferStockPage = () => {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const role = user?.role;
-
-  const canApproveTransfers = useMemo(
-    () => ["ADMIN", "WAREHOUSE_MANAGER"].includes(role),
-    [role]
-  );
-  const canOperateTransfers = useMemo(
-    () => ["ADMIN", "WAREHOUSE_MANAGER", "WAREHOUSE_STAFF"].includes(role),
-    [role]
+  const canApproveTransfers = usePermission("transfer.approve");
+  const canOperateTransfers = usePermission(
+    ["transfer.create", "transfer.ship", "transfer.receive"],
+    {
+      mode: "any",
+    }
   );
 
   const [activeTab, setActiveTab] = useState("internal");

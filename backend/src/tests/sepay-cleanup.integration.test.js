@@ -7,11 +7,20 @@ import Order from "../modules/order/Order.js";
 import AuditLog from "../modules/audit/AuditLog.js";
 import { ORDER_AUDIT_ACTIONS } from "../modules/order/orderAuditActions.js";
 import { cancelExpiredVNPayOrders } from "../modules/order/orderCleanupService.js";
+import UniversalProduct, { UniversalVariant } from "../modules/product/UniversalProduct.js";
 
 let replSet;
 let orderSeed = 1;
 
 const nextOrderNumber = () => `ORD-SEPAY-CLEAN-${String(orderSeed++).padStart(6, "0")}`;
+
+const ensureCollectionExists = async (name) => {
+  const existing = await mongoose.connection.db.listCollections({ name }).toArray();
+  if (existing.length > 0) {
+    return;
+  }
+  await mongoose.connection.createCollection(name);
+};
 
 const clearAllCollections = async () => {
   const collections = Object.values(mongoose.connection.collections);
@@ -102,6 +111,17 @@ before(
     await mongoose.connect(replSet.getUri(), {
       dbName: "sepay-cleanup-integration-test",
     });
+
+    await Promise.all([
+      ensureCollectionExists("orders"),
+      ensureCollectionExists("auditlogs"),
+      ensureCollectionExists("universalproducts"),
+      ensureCollectionExists("universalvariants"),
+      Order.init(),
+      AuditLog.init(),
+      UniversalProduct.init(),
+      UniversalVariant.init(),
+    ]);
   },
   { timeout: 180000 }
 );

@@ -57,6 +57,7 @@ const ReceiveGoodsPage = () => {
   const [qualityStatus, setQualityStatus] = useState("GOOD");
   const [notes, setNotes] = useState("");
   const [serializedInput, setSerializedInput] = useState("");
+  const [sellingPrice, setSellingPrice] = useState("");
 
   // Step 4: Hoàn tất
   const [signature, setSignature] = useState("");
@@ -145,6 +146,12 @@ const ReceiveGoodsPage = () => {
       return;
     }
 
+    const resolvedSellingPrice = Number(sellingPrice);
+    if (sellableQuantity > 0 && (!Number.isFinite(resolvedSellingPrice) || resolvedSellingPrice <= 0)) {
+      toast.error("Valid selling price is required for sellable units");
+      return;
+    }
+
     try {
       setLoading(true);
       
@@ -155,6 +162,7 @@ const ReceiveGoodsPage = () => {
         damagedQuantity: damaged,
         locationCode: selectedLocation.locationCode,
         qualityStatus,
+        sellingPrice: sellableQuantity > 0 ? resolvedSellingPrice : 0,
         notes,
         serializedUnits,
       });
@@ -167,6 +175,7 @@ const ReceiveGoodsPage = () => {
         damagedQuantity: damaged,
         locationCode: selectedLocation.locationCode,
         qualityStatus,
+        sellingPrice: sellableQuantity > 0 ? resolvedSellingPrice : 0,
         notes,
       };
       setReceivedItems(newReceivedItems);
@@ -178,6 +187,7 @@ const ReceiveGoodsPage = () => {
       setDamagedQuantity("");
       setNotes("");
        setSerializedInput("");
+      setSellingPrice("");
       setQualityStatus("GOOD");
       setSelectedLocation(null);
 
@@ -388,6 +398,31 @@ const ReceiveGoodsPage = () => {
               {/* Chất lượng */}
               <div>
                 <Label>Chất lượng</Label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <Label>PO Cost</Label>
+                    <Input
+                      value={String(currentItem.costPrice || currentItem.unitPrice || 0)}
+                      disabled
+                      className="mt-1"
+                    />
+                  </div>
+                  <div>
+                    <Label>Selling Price *</Label>
+                    <Input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={sellingPrice}
+                      onChange={(e) => setSellingPrice(e.target.value)}
+                      className="mt-1"
+                      disabled={
+                        qualityStatus !== "GOOD" ||
+                        Math.max(0, (parseInt(currentQuantity) || 0) - (parseInt(damagedQuantity) || 0)) === 0
+                      }
+                    />
+                  </div>
+                </div>
                 <select
                   value={qualityStatus}
                   onChange={(e) => setQualityStatus(e.target.value)}

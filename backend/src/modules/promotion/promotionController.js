@@ -2,6 +2,7 @@
 import Promotion from "./Promotion.js";
 import PromotionUsage from "./PromotionUsage.js";
 import mongoose from "mongoose";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 
 export const getAllPromotions = async (req, res) => {
@@ -315,7 +316,7 @@ export const applyPromotion = async (req, res) => {
   try {
     const { code, totalAmount, orderId } = req.body;
     const userId = req.user._id;
-    const userRole = req.user.role;
+    const isCustomerFlow = !req.authz?.permissions?.has(AUTHZ_ACTIONS.PROMOTION_MANAGE);
 
     // === Validate input ===
     if (!code?.trim()) {
@@ -358,7 +359,7 @@ export const applyPromotion = async (req, res) => {
       });
     }
 
-    const isCustomer = userRole === "CUSTOMER";
+    const isCustomer = isCustomerFlow;
 
     // === CHỈ CUSTOMER MỚI BỊ GIỚI HẠN & LƯU LỊCH SỬ ===
     if (isCustomer) {

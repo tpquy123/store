@@ -1,8 +1,3 @@
-// ============================================
-// FILE: backend/src/modules/warehouse/stockInController.js
-// Direct stock-in for Global Admin (no PO required)
-// ============================================
-
 import mongoose from "mongoose";
 import Inventory from "./Inventory.js";
 import WarehouseLocation from "./WarehouseLocation.js";
@@ -21,6 +16,11 @@ import {
   resolveAfterSalesConfigByProductId,
 } from "../device/afterSalesConfig.js";
 import { registerSerializedUnits } from "../device/deviceService.js";
+import {
+  applyPricingSnapshotToDocument,
+  recalculateProductAvailability,
+  updateCurrentPricingForSku,
+} from "../product/productPricingService.js";
 
 const DEFAULT_STORE_MIN_STOCK = 5;
 
@@ -33,11 +33,19 @@ const toPositiveInteger = (value) => {
   return Math.floor(parsed);
 };
 
-// ============================================
-// SYNC TO STORE INVENTORY (reused pattern)
-// ============================================
-const syncStoreInventory = async ({ productId, variantSku, receivedQuantity, session }) => {
-  console.log(`📦 [STOCK-IN] syncStoreInventory: productId=${productId}, sku=${variantSku}, qty=${receivedQuantity}`);
+const toNonNegativeMoney = (value) => {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed) || parsed < 0) return null;
+  return parsed;
+};
+
+const syncStoreInventory = async ({
+  productId,
+  variantSku,
+  receivedQuantity,
+  pricingSnapshot = null,
+  session,
+}) => {
   if (!productId || !variantSku || receivedQuantity <= 0) return [];
 
   const stores = await Store.find({
@@ -49,7 +57,7 @@ const syncStoreInventory = async ({ productId, variantSku, receivedQuantity, ses
 
   if (stores.length === 0) return [];
 
-  const storeIds = stores.map((s) => s._id);
+  const storeIds = stores.map((store) => store._id);
   const currentInventories = await StoreInventory.find({
     productId,
     variantSku,
@@ -66,66 +74,84 @@ const syncStoreInventory = async ({ productId, variantSku, receivedQuantity, ses
   let remaining = receivedQuantity;
   const rawAllocations = [];
 
-  // Priority 1: fill below-minStock stores
   for (const store of stores) {
     if (remaining <= 0) break;
+
     const inventory = inventoryByStore.get(String(store._id));
     const currentQty = Number(inventory?.quantity) || 0;
     const minStock = Number(inventory?.minStock ?? DEFAULT_STORE_MIN_STOCK);
-    const minTarget = Number.isFinite(minStock) && minStock > 0 ? Math.floor(minStock) : DEFAULT_STORE_MIN_STOCK;
+    const minTarget =
+      Number.isFinite(minStock) && minStock > 0
+        ? Math.floor(minStock)
+        : DEFAULT_STORE_MIN_STOCK;
     const deficit = Math.max(0, minTarget - currentQty);
+
     if (deficit <= 0) continue;
-    const allocate = Math.min(deficit, remaining);
-    rawAllocations.push({ storeId: store._id, quantity: allocate });
-    remaining -= allocate;
+
+    const allocation = Math.min(deficit, remaining);
+    rawAllocations.push({ storeId: store._id, quantity: allocation });
+    remaining -= allocation;
   }
 
-  // Priority 2: distribute remaining by capacity weight
   if (remaining > 0) {
-    const weightedStores = stores.map((s) => ({
-      storeId: s._id,
-      weight: Math.max(1, Number(s.capacity?.maxOrdersPerDay) || 100),
+    const weightedStores = stores.map((store) => ({
+      storeId: store._id,
+      weight: Math.max(1, Number(store.capacity?.maxOrdersPerDay) || 100),
     }));
-    const totalWeight = weightedStores.reduce((sum, item) => sum + item.weight, 0) || 1;
-    const remainingBefore = remaining;
-    let allocated = 0;
+    const totalWeight =
+      weightedStores.reduce((sum, item) => sum + item.weight, 0) || 1;
+    const remainingBeforeWeighted = remaining;
+    let weightedAllocated = 0;
 
-    for (let i = 0; i < weightedStores.length; i++) {
+    for (let index = 0; index < weightedStores.length; index += 1) {
       if (remaining <= 0) break;
-      const isLast = i === weightedStores.length - 1;
-      let allocate = isLast
-        ? remainingBefore - allocated
-        : Math.floor((remainingBefore * weightedStores[i].weight) / totalWeight);
-      allocate = Math.min(allocate, remaining);
-      if (allocate <= 0) continue;
-      rawAllocations.push({ storeId: weightedStores[i].storeId, quantity: allocate });
-      allocated += allocate;
-      remaining -= allocate;
+
+      const isLast = index === weightedStores.length - 1;
+      let allocation = isLast
+        ? remainingBeforeWeighted - weightedAllocated
+        : Math.floor(
+            (remainingBeforeWeighted * weightedStores[index].weight) / totalWeight
+          );
+
+      allocation = Math.min(allocation, remaining);
+      if (allocation <= 0) continue;
+
+      rawAllocations.push({
+        storeId: weightedStores[index].storeId,
+        quantity: allocation,
+      });
+      weightedAllocated += allocation;
+      remaining -= allocation;
     }
 
     if (remaining > 0 && weightedStores.length > 0) {
-      rawAllocations.push({ storeId: weightedStores[0].storeId, quantity: remaining });
-      remaining = 0;
+      rawAllocations.push({
+        storeId: weightedStores[0].storeId,
+        quantity: remaining,
+      });
     }
   }
 
-  // Merge allocations for same store
-  const merged = new Map();
-  for (const a of rawAllocations) {
-    const key = String(a.storeId);
-    const current = merged.get(key);
+  const mergedAllocations = new Map();
+  for (const allocation of rawAllocations) {
+    const key = String(allocation.storeId);
+    const current = mergedAllocations.get(key);
     if (current) {
-      current.quantity += a.quantity;
+      current.quantity += allocation.quantity;
     } else {
-      merged.set(key, { storeId: a.storeId, quantity: a.quantity });
+      mergedAllocations.set(key, {
+        storeId: allocation.storeId,
+        quantity: allocation.quantity,
+      });
     }
   }
 
   const distribution = [];
-  for (const allocation of merged.values()) {
+
+  for (const allocation of mergedAllocations.values()) {
     if (allocation.quantity <= 0) continue;
 
-    let storeInv = await StoreInventory.findOne({
+    let storeInventory = await StoreInventory.findOne({
       productId,
       variantSku,
       storeId: allocation.storeId,
@@ -133,8 +159,8 @@ const syncStoreInventory = async ({ productId, variantSku, receivedQuantity, ses
       .session(session)
       .setOptions({ skipBranchIsolation: true });
 
-    if (!storeInv) {
-      storeInv = new StoreInventory({
+    if (!storeInventory) {
+      storeInventory = new StoreInventory({
         productId,
         variantSku,
         storeId: allocation.storeId,
@@ -143,26 +169,24 @@ const syncStoreInventory = async ({ productId, variantSku, receivedQuantity, ses
       });
     }
 
-    storeInv.quantity = (Number(storeInv.quantity) || 0) + allocation.quantity;
-    storeInv.lastRestockDate = new Date();
-    storeInv.lastRestockQuantity = allocation.quantity;
-    await storeInv.save({ session });
+    storeInventory.quantity =
+      (Number(storeInventory.quantity) || 0) + allocation.quantity;
+    storeInventory.lastRestockDate = new Date();
+    storeInventory.lastRestockQuantity = allocation.quantity;
+    applyPricingSnapshotToDocument(storeInventory, pricingSnapshot || {});
+    await storeInventory.save({ session });
 
     distribution.push({
       storeId: allocation.storeId,
       quantity: allocation.quantity,
-      available: storeInv.available,
-      status: storeInv.status,
+      available: storeInventory.available,
+      status: storeInventory.status,
     });
   }
 
   return distribution;
 };
 
-// ============================================
-// DIRECT STOCK-IN (No PO required)
-// POST /api/warehouse/stock-in
-// ============================================
 export const directStockIn = async (req, res) => {
   const session = await mongoose.startSession();
   session.startTransaction();
@@ -171,76 +195,76 @@ export const directStockIn = async (req, res) => {
     const activeStoreId = ensureWarehouseWriteBranchId(req);
     await resolveWarehouseStore(req, { branchId: activeStoreId, session });
 
-    const { items } = req.body;
+    const items = Array.isArray(req.body?.items) ? req.body.items : [];
     const actorName = getActorName(req.user);
 
-    console.log(`\n🔥 [STOCK-IN] directStockIn called by ${actorName} (${req.user?.role})`);
-    console.log(`📋 [STOCK-IN] Items received:`, JSON.stringify(items, null, 2));
-
-    if (!Array.isArray(items) || items.length === 0) {
+    if (items.length === 0) {
       await session.abortTransaction();
       return res.status(400).json({
         success: false,
-        message: "Danh sách sản phẩm nhập kho không hợp lệ",
+        message: "Danh sach san pham nhap kho khong hop le",
       });
     }
 
     const results = [];
     const activatedProducts = new Set();
+    const batchReferenceId = `STOCKIN-${Date.now()}`;
 
     for (const item of items) {
-      const { sku, quantity, locationCode, notes, serializedUnits = [] } = item;
+      const normalizedSku = String(item?.sku || "").trim();
+      const normalizedLocationCode = String(item?.locationCode || "").trim();
+      const qty = toPositiveInteger(item?.quantity);
+      const inboundCostPrice = toNonNegativeMoney(item?.costPrice);
+      const inboundSellingPrice = toNonNegativeMoney(item?.sellingPrice);
+      const notes = String(item?.notes || "").trim();
+      const serializedUnits = Array.isArray(item?.serializedUnits)
+        ? item.serializedUnits
+        : [];
 
-      const normalizedSku = String(sku || "").trim();
-      const normalizedLocationCode = String(locationCode || "").trim();
-      const qty = toPositiveInteger(quantity);
-
-      if (!normalizedSku || !normalizedLocationCode || !qty) {
+      if (
+        !normalizedSku ||
+        !normalizedLocationCode ||
+        !qty ||
+        inboundCostPrice === null ||
+        inboundSellingPrice === null ||
+        inboundSellingPrice <= 0
+      ) {
         throw new Error(
-          `Dữ liệu không hợp lệ cho SKU: ${normalizedSku || "(trống)"} (cần sku, quantity > 0, locationCode)`
+          `Du lieu khong hop le cho SKU ${normalizedSku || "(trong)"}. Can sku, quantity > 0, locationCode, costPrice >= 0, sellingPrice > 0`
         );
       }
 
-      // 1. Validate variant exists
-      console.log(`\n🔍 [STOCK-IN] Processing item: sku=${normalizedSku}, qty=${qty}, loc=${normalizedLocationCode}`);
-      const variant = await UniversalVariant.findOne({ sku: normalizedSku }).session(session);
+      const variant = await UniversalVariant.findOne({ sku: normalizedSku }).session(
+        session
+      );
       if (!variant) {
-        throw new Error(`Không tìm thấy biến thể SKU: ${normalizedSku}`);
+        throw new Error(`Khong tim thay bien the SKU: ${normalizedSku}`);
       }
-      console.log(`✅ [STOCK-IN] Variant found: ${variant.color} ${variant.variantName}, currentStock=${variant.stock}`);
 
-      // 2. Validate location
+      const product = await UniversalProduct.findById(variant.productId).session(
+        session
+      );
+      if (!product) {
+        throw new Error(`Khong tim thay san pham cho SKU: ${normalizedSku}`);
+      }
+      const statusBeforeStockIn = String(product.status || "");
+
       const location = await WarehouseLocation.findOne({
         storeId: activeStoreId,
         locationCode: normalizedLocationCode,
         status: "ACTIVE",
       }).session(session);
-
       if (!location) {
-        throw new Error(`Không tìm thấy vị trí kho: ${normalizedLocationCode}`);
+        throw new Error(`Khong tim thay vi tri kho: ${normalizedLocationCode}`);
       }
 
-      // 3. Check capacity
       const currentLoad = Number(location.currentLoad) || 0;
       const capacity = Number(location.capacity) || 0;
       if (capacity > 0 && currentLoad + qty > capacity) {
         throw new Error(
-          `Vị trí kho ${normalizedLocationCode} không đủ chỗ (${currentLoad}/${capacity})`
+          `Vi tri kho ${normalizedLocationCode} khong du cho (${currentLoad}/${capacity})`
         );
       }
-
-      // 4. Update/create Inventory
-      let inventory = await Inventory.findOne({
-        storeId: activeStoreId,
-        sku: normalizedSku,
-        locationId: location._id,
-      }).session(session);
-
-      const product = await UniversalProduct.findById(variant.productId).session(session);
-      if (!product) {
-        throw new Error(`Không tìm thấy sản phẩm cho SKU: ${normalizedSku}`);
-      }
-      console.log(`✅ [STOCK-IN] Product: ${product.name}, lifecycle=${product.lifecycleStage}, status=${product.status}`);
 
       const afterSalesContext = await resolveAfterSalesConfigByProductId({
         productId: product._id,
@@ -250,20 +274,28 @@ export const directStockIn = async (req, res) => {
         afterSalesContext && isSerializedConfig(afterSalesContext.config)
       );
 
-      if (serializedTrackingEnabled) {
-        if (!Array.isArray(serializedUnits) || serializedUnits.length !== qty) {
-          throw new Error(
-            `SKU ${normalizedSku} requires ${qty} serialized unit(s) with IMEI/serial information`
-          );
-        }
+      if (serializedTrackingEnabled && serializedUnits.length !== qty) {
+        throw new Error(
+          `SKU ${normalizedSku} requires ${qty} serialized unit(s) with IMEI/serial information`
+        );
       }
 
-      if (inventory) {
-        inventory.quantity = (Number(inventory.quantity) || 0) + qty;
-        inventory.lastReceived = new Date();
-        if (notes) inventory.notes = String(notes).trim();
-        await inventory.save({ session });
-      } else {
+      const { variant: pricedVariant, snapshot } = await updateCurrentPricingForSku({
+        productId: product._id,
+        variantSku: normalizedSku,
+        variantId: variant._id,
+        costPrice: inboundCostPrice,
+        sellingPrice: inboundSellingPrice,
+        session,
+      });
+
+      let inventory = await Inventory.findOne({
+        storeId: activeStoreId,
+        sku: normalizedSku,
+        locationId: location._id,
+      }).session(session);
+
+      if (!inventory) {
         inventory = new Inventory({
           storeId: activeStoreId,
           sku: normalizedSku,
@@ -271,63 +303,55 @@ export const directStockIn = async (req, res) => {
           productName: product.name,
           locationId: location._id,
           locationCode: location.locationCode,
-          quantity: qty,
-          lastReceived: new Date(),
+          quantity: 0,
           status: "GOOD",
-          notes: String(notes || "").trim(),
+          notes,
         });
-        await inventory.save({ session });
       }
 
-      // 5. Update location load
+      inventory.quantity = (Number(inventory.quantity) || 0) + qty;
+      inventory.lastReceived = new Date();
+      inventory.status = "GOOD";
+      inventory.notes = notes;
+      applyPricingSnapshotToDocument(inventory, snapshot);
+      await inventory.save({ session });
+
       location.currentLoad = currentLoad + qty;
       await location.save({ session });
 
-      // 6. Update variant stock
-      variant.stock = (Number(variant.stock) || 0) + qty;
-      await variant.save({ session });
+      pricedVariant.stock = (Number(pricedVariant.stock) || 0) + qty;
+      await pricedVariant.save({ session });
 
-      // 7. Create stock movement log
-      const movement = new StockMovement({
-        storeId: activeStoreId,
-        type: "INBOUND",
-        sku: normalizedSku,
-        productId: product._id,
-        productName: product.name,
-        toLocationId: location._id,
-        toLocationCode: location.locationCode,
-        quantity: qty,
-        referenceType: "MANUAL",
-        referenceId: `STOCKIN-${Date.now()}`,
-        performedBy: req.user._id,
-        performedByName: actorName,
-        qualityStatus: "GOOD",
-        notes: String(notes || "").trim(),
-      });
-      await movement.save({ session });
+      await StockMovement.create(
+        [
+          {
+            storeId: activeStoreId,
+            type: "INBOUND",
+            sku: normalizedSku,
+            productId: product._id,
+            productName: product.name,
+            toLocationId: location._id,
+            toLocationCode: location.locationCode,
+            quantity: qty,
+            referenceType: "MANUAL",
+            referenceId: batchReferenceId,
+            performedBy: req.user._id,
+            performedByName: actorName,
+            qualityStatus: "GOOD",
+            notes,
+            ...snapshot,
+          },
+        ],
+        { session }
+      );
 
-      // 8. Auto-activate SKELETON product
-      if (product.lifecycleStage === "SKELETON" && !activatedProducts.has(String(product._id))) {
-        product.lifecycleStage = "ACTIVE";
-        product.status = "AVAILABLE";
-        await product.save({ session });
-        activatedProducts.add(String(product._id));
-        console.log(`✅ Product activated: ${product.name} (${product._id})`);
-      } else if (product.status === "OUT_OF_STOCK" && !activatedProducts.has(String(product._id))) {
-        // If product was just out of stock but active, mark as available
-        product.status = "AVAILABLE";
-        await product.save({ session });
-      }
-
-      // 9. Sync to store inventory
-      console.log(`📦 [STOCK-IN] Syncing to store inventory...`);
       const distributedToStores = await syncStoreInventory({
         productId: product._id,
         variantSku: normalizedSku,
         receivedQuantity: qty,
+        pricingSnapshot: snapshot,
         session,
       });
-      console.log(`✅ [STOCK-IN] Distributed to ${distributedToStores.length} stores`);
 
       const createdDevices = serializedTrackingEnabled
         ? await registerSerializedUnits({
@@ -335,10 +359,14 @@ export const directStockIn = async (req, res) => {
             warehouseLocationId: location._id,
             warehouseLocationCode: location.locationCode,
             productId: product._id,
-            variantId: variant._id,
+            variantId: pricedVariant._id,
             variantSku: normalizedSku,
             productName: product.name,
-            variantName: variant.variantName || "",
+            variantName: pricedVariant.variantName || "",
+            basePrice: snapshot.basePrice,
+            originalPrice: snapshot.originalPrice,
+            sellingPrice: snapshot.sellingPrice,
+            costPrice: snapshot.costPrice,
             serializedUnits,
             notes,
             actor: req.user,
@@ -346,17 +374,32 @@ export const directStockIn = async (req, res) => {
           })
         : [];
 
+      const recalculatedProduct = await recalculateProductAvailability({
+        productId: product._id,
+        session,
+      });
+      const productActivated =
+        String(recalculatedProduct?.status || "") === "IN_STOCK" &&
+        statusBeforeStockIn !== "IN_STOCK";
+      if (productActivated) {
+        activatedProducts.add(String(product._id));
+      }
+
       results.push({
         sku: normalizedSku,
         productName: product.name,
         quantity: qty,
         locationCode: normalizedLocationCode,
-        variantStockAfter: variant.stock,
+        variantStockAfter: pricedVariant.stock,
         inventoryQuantity: inventory.quantity,
+        basePrice: snapshot.basePrice,
+        costPrice: snapshot.costPrice,
+        sellingPrice: snapshot.sellingPrice,
+        referenceId: batchReferenceId,
         distributedToStores,
         serializedTrackingEnabled,
         registeredDevices: createdDevices.length,
-        productActivated: activatedProducts.has(String(product._id)),
+        productActivated,
       });
     }
 
@@ -364,31 +407,26 @@ export const directStockIn = async (req, res) => {
 
     res.status(201).json({
       success: true,
-      message: `Nhập kho thành công ${results.length} mục`,
+      message: `Nhap kho thanh cong ${results.length} muc`,
       data: {
         items: results,
+        referenceId: batchReferenceId,
         totalItems: results.length,
-        totalQuantity: results.reduce((sum, r) => sum + r.quantity, 0),
+        totalQuantity: results.reduce((sum, item) => sum + item.quantity, 0),
         activatedProducts: activatedProducts.size,
       },
     });
   } catch (error) {
     await session.abortTransaction();
-    console.error("❌ DIRECT STOCK-IN ERROR:", error.message);
-    console.error("❌ DIRECT STOCK-IN STACK:", error.stack);
     res.status(400).json({
       success: false,
-      message: error.message || "Lỗi khi nhập kho",
+      message: error.message || "Loi khi nhap kho",
     });
   } finally {
     session.endSession();
   }
 };
 
-// ============================================
-// GET STOCK-IN HISTORY
-// GET /api/warehouse/stock-in/history
-// ============================================
 export const getStockInHistory = async (req, res) => {
   try {
     const { page = 1, limit = 20, search, startDate, endDate } = req.query;
@@ -444,10 +482,9 @@ export const getStockInHistory = async (req, res) => {
       },
     });
   } catch (error) {
-    console.error("❌ GET STOCK-IN HISTORY ERROR:", error);
     res.status(500).json({
       success: false,
-      message: "Lỗi khi lấy lịch sử nhập kho",
+      message: "Loi khi lay lich su nhap kho",
       error: error.message,
     });
   }

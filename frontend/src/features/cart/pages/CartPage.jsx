@@ -38,7 +38,7 @@ import { useCartStore } from "../state/cart.store";
 import { formatPrice, cn } from "@/shared/lib/utils";
 import { toast } from "sonner";
 import { Checkbox } from "@/shared/ui/checkbox";
-import { iPhoneAPI, iPadAPI, macAPI, airPodsAPI, appleWatchAPI, accessoryAPI, universalProductAPI } from "@/features/catalog";
+import { universalProductAPI } from "@/features/catalog";
 
 const CartPage = () => {
   const navigate = useNavigate();
@@ -337,27 +337,7 @@ const confirmBulkDelete = async () => {
 
     setLoadingVariants((prev) => ({ ...prev, [item.productId]: true }));
     try {
-      const apiMap = {
-        iPhone: iPhoneAPI,
-        iPad: iPadAPI,
-        Mac: macAPI,
-        AirPods: airPodsAPI,
-        AppleWatch: appleWatchAPI,
-        Accessory: accessoryAPI,
-        UniversalProduct: universalProductAPI, // ✅ Added UniversalProduct API support
-      };
-      
-      // Determine API to use
-      let api = apiMap[item.productType];
-      
-      // Fallback for universal products if type string doesn't match keys
-      if (!api && !Object.keys(apiMap).includes(item.productType)) {
-         api = universalProductAPI;
-      }
-      
-      if (!api) return null;
-
-      const res = await api.getById(item.productId);
+      const res = await universalProductAPI.getById(item.productId);
       const product = res.data.data.product;
       const variants = product.variants || [];
 

@@ -1,5 +1,5 @@
 import express from "express";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
 import { authorize } from "../../middleware/authz/authorize.js";
 import { withScopedRepository } from "../../middleware/authz/withScopedRepository.js";
@@ -15,7 +15,7 @@ const resolveKpiScopeMode = (req) => {
   if (view === "assigned") return "assigned";
   if (view === "branch") return "branch";
   
-  if (req.user?.role === "GLOBAL_ADMIN") return "global";
+  if (req.authz?.isGlobalAdmin) return "global";
   return "branch";
 };
 
@@ -129,7 +129,14 @@ router.get("/sales-by-time", requireGlobalAnalytics, async (req, res) => {
   }
 });
 
-router.delete("/reset/:productId", restrictTo("ADMIN"), requireGlobalAnalytics, async (req, res) => {
+router.delete(
+  "/reset/:productId",
+  requireGlobalAnalytics,
+  authorize(AUTHZ_ACTIONS.ANALYTICS_MANAGE_GLOBAL, {
+    scopeMode: "global",
+    resourceType: "ANALYTICS",
+  }),
+  async (req, res) => {
   try {
     const { productId } = req.params;
     const { variantId } = req.query;
@@ -150,7 +157,6 @@ router.delete("/reset/:productId", restrictTo("ADMIN"), requireGlobalAnalytics, 
 
 router.get(
   "/dashboard",
-  restrictTo("ADMIN", "WAREHOUSE_MANAGER"),
   requireGlobalAnalytics,
   async (req, res) => {
   try {
@@ -201,9 +207,9 @@ router.get(
 
 router.get(
   "/employee/personal",
-  restrictTo("POS_STAFF", "SHIPPER", "CASHIER", "ADMIN"),
   authorize(AUTHZ_ACTIONS.ANALYTICS_READ_PERSONAL, {
-    scopeMode: (req) => (req.user?.role === "SHIPPER" ? "task" : "branch"),
+    scopeMode: (req) =>
+      req.authz?.permissions?.has(AUTHZ_ACTIONS.TASK_UPDATE) ? "task" : "branch",
     requireActiveBranchFor: ["branch"],
     resourceType: "ANALYTICS",
     audit: false,

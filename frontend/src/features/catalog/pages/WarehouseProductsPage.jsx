@@ -2,7 +2,7 @@
 // ✅ ENHANCED: Modern UI with new tab navigation for product details
 import React, { useState, useEffect, useRef } from "react";
 import { useNavigate } from "react-router-dom";
-import { useAuthStore } from "@/features/auth";
+import { usePermission } from "@/features/auth";
 import { Button } from "@/shared/ui/button";
 import { toast } from "sonner";
 import { 
@@ -41,11 +41,9 @@ import { Badge } from "@/shared/ui/badge";
 
 const ProductsPage = () => {
   const navigate = useNavigate();
-  const { user } = useAuthStore();
-  const normalizedRole = String(user?.role || "").toUpperCase();
-  const canManageProducts = ["ADMIN", "PRODUCT_MANAGER", "GLOBAL_ADMIN"].includes(
-    normalizedRole
-  );
+  const canManageProducts = usePermission(["product.create", "product.update"], {
+    mode: "any",
+  });
   
   // Refs for potential future use
   const containerRef = useRef(null);

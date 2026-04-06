@@ -118,6 +118,10 @@ export const registerSerializedUnits = async ({
   variantSku,
   productName,
   variantName = "",
+  basePrice = 0,
+  originalPrice = 0,
+  sellingPrice = 0,
+  costPrice = 0,
   serializedUnits = [],
   notes = "",
   actor = {},
@@ -174,6 +178,15 @@ export const registerSerializedUnits = async ({
           variantSku,
           productName,
           variantName,
+          basePrice: Number(basePrice) || 0,
+          originalPrice: Number(originalPrice) || Number(basePrice) || 0,
+          sellingPrice:
+            Number(sellingPrice) ||
+            Number(originalPrice) ||
+            Number(basePrice) ||
+            0,
+          costPrice: Number(costPrice) || 0,
+          priceUpdatedAt: new Date(),
           imei: normalizedUnit.imei,
           imeiNormalized: normalizedUnit.imeiNormalized || undefined,
           serialNumber: normalizedUnit.serialNumber,

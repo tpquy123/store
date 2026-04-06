@@ -29,12 +29,14 @@ import {
 } from "lucide-react";
 import { formatPrice, formatDate } from "@/shared/lib/utils";
 import { getInterFontStylesheetTag, getPrimaryFontStack } from "@/shared/lib/typography";
-import { useAuthStore } from "@/features/auth";
+import { usePermission } from "@/features/auth";
 import { posAPI } from "@/features/pos";
 
 const VATInvoicesPage = () => {
-  const { user } = useAuthStore();
-  const isAdmin = user?.role === "ADMIN";
+  const canViewCrossStaffSales = usePermission(
+    ["users.manage.branch", "users.manage.global", "analytics.read.branch", "analytics.read.global"],
+    { mode: "any" },
+  );
 
   const [orders, setOrders] = useState([]);
   const [isLoading, setIsLoading] = useState(false);
@@ -312,7 +314,7 @@ const VATInvoicesPage = () => {
             Lịch sử bán hàng
           </h1>
           <p className="text-sm text-muted-foreground">
-            {isAdmin
+            {canViewCrossStaffSales
               ? "Xem tất cả đơn hàng trong hệ thống"
               : "Xem các đơn hàng đã xử lý"}
           </p>
@@ -484,12 +486,12 @@ const VATInvoicesPage = () => {
                   {/* Row 2: info grid */}
                   <div
                     className={`grid gap-x-3 gap-y-1 text-xs sm:text-sm mb-3 ${
-                      isAdmin
+                      canViewCrossStaffSales
                         ? "grid-cols-2 sm:grid-cols-3 lg:grid-cols-5"
                         : "grid-cols-2 sm:grid-cols-4"
                     }`}
                   >
-                    {isAdmin && (
+                    {canViewCrossStaffSales && (
                       <div>
                         <p className="text-muted-foreground text-xs">
                           NV bán:
@@ -619,7 +621,7 @@ const VATInvoicesPage = () => {
                       <strong>Thời gian:</strong>{" "}
                       {formatDate(selectedOrder.createdAt)}
                     </p>
-                    {isAdmin && (
+                    {canViewCrossStaffSales && (
                       <p>
                         <strong>NV bán:</strong>{" "}
                         {selectedOrder.posInfo?.staffName || "N/A"}

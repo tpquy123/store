@@ -1,34 +1,34 @@
 import React from "react";
 import { Navigate } from "react-router-dom";
-import { useAuthStore } from "@/features/auth";
+import { useAuthStore, usePermission } from "@/features/auth";
+import {
+  isGlobalAdminAuthorization,
+  resolveHomeRoute,
+} from "@/features/auth/lib/authorization";
 import { Loading } from "@/shared/ui/Loading";
 
-const ProtectedRoute = ({ children, allowedRoles, allowedPermissions }) => {
-  const { isAuthenticated, user, authz, rehydrating } = useAuthStore();
+const ProtectedRoute = ({ children, allowedPermissions }) => {
+  const { isAuthenticated, user, authz, authorization, rehydrating } = useAuthStore();
+  const hasAllowedPermission = usePermission(allowedPermissions || [], { mode: "any" });
+  const hasPermissionRules =
+    Array.isArray(allowedPermissions) && allowedPermissions.length > 0;
 
   if (rehydrating) return <Loading />;
   if (!isAuthenticated || !user) return <Navigate to="/" replace />;
 
-  if (user?.role === "GLOBAL_ADMIN" || authz?.isGlobalAdmin) {
+  if (isGlobalAdminAuthorization({ user, authz, authorization })) {
     return children;
   }
 
-  if (allowedPermissions && allowedPermissions.length > 0) {
-    const permissionSet = new Set(Array.isArray(authz?.permissions) ? authz.permissions : []);
-    const hasAnyPermission =
-      permissionSet.has("*") ||
-      allowedPermissions.some((permission) => permissionSet.has(permission));
-
-    if (!hasAnyPermission) {
-      return <Navigate to="/" replace />;
-    }
+  if (!hasPermissionRules) {
+    return children;
   }
 
-  if (allowedRoles && !allowedRoles.includes(user.role)) {
-    return <Navigate to="/" replace />;
+  if (hasAllowedPermission) {
+    return children;
   }
 
-  return children;
+  return <Navigate to={resolveHomeRoute({ user, authz, authorization }) || "/"} replace />;
 };
 
 export default ProtectedRoute;

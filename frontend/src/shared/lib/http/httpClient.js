@@ -9,17 +9,6 @@ console.info("🚀 [HTTP Setup] Kích hoạt API Client với cấu hình:", {
   finalBaseUrl: BASE_URL,
 });
 
-const BRANCH_SCOPED_ROLES = new Set([
-  "ADMIN",
-  "BRANCH_ADMIN",
-  "WAREHOUSE_MANAGER",
-  "WAREHOUSE_STAFF",
-  "PRODUCT_MANAGER",
-  "ORDER_MANAGER",
-  "POS_STAFF",
-  "CASHIER",
-]);
-
 const normalizeBranchId = (value) => {
   if (!value) return "";
   return String(value).trim();
@@ -30,25 +19,23 @@ const toAllowedBranchIds = (authz) => {
   return [...new Set(raw.map(normalizeBranchId).filter(Boolean))];
 };
 
+const resolveAuthorizationState = (state) => state?.authorization || state?.authz || null;
+
 const isGlobalAdminState = (state) => {
-  const role = String(state?.user?.role || "").toUpperCase();
-  return Boolean(state?.authz?.isGlobalAdmin || role === "GLOBAL_ADMIN");
+  const authz = resolveAuthorizationState(state);
+  return Boolean(authz?.isGlobalAdmin);
 };
 
 const isBranchScopedStaffState = (state) => {
+  const authz = resolveAuthorizationState(state);
   if (isGlobalAdminState(state)) return false;
-
-  if (state?.authz?.requiresBranchAssignment === true) {
-    return true;
-  }
-
-  const role = String(state?.user?.role || "").toUpperCase();
-  return BRANCH_SCOPED_ROLES.has(role);
+  return authz?.requiresBranchAssignment === true;
 };
 
 const deriveFixedBranchIdFromState = (state) => {
-  const allowedBranchIds = toAllowedBranchIds(state?.authz);
-  const authzActiveBranchId = normalizeBranchId(state?.authz?.activeBranchId);
+  const authz = resolveAuthorizationState(state);
+  const allowedBranchIds = toAllowedBranchIds(authz);
+  const authzActiveBranchId = normalizeBranchId(authz?.activeBranchId);
 
   if (authzActiveBranchId) {
     if (allowedBranchIds.length === 0 || allowedBranchIds.includes(authzActiveBranchId)) {
@@ -59,8 +46,7 @@ const deriveFixedBranchIdFromState = (state) => {
   if (allowedBranchIds.length > 0) {
     return allowedBranchIds[0];
   }
-
-  return normalizeBranchId(state?.user?.storeLocation);
+  return "";
 };
 
 export const api = axios.create({
@@ -76,20 +62,21 @@ api.interceptors.request.use(
       try {
         const { state } = JSON.parse(authStorage);
         const token = state?.token;
+        const authz = resolveAuthorizationState(state);
         if (token) {
           config.headers.Authorization = `Bearer ${token}`;
         }
 
-        const allowedBranchIds = toAllowedBranchIds(state?.authz);
+        const allowedBranchIds = toAllowedBranchIds(authz);
         const fixedBranchId = deriveFixedBranchIdFromState(state);
         const mutableBranchId = normalizeBranchId(state?.activeBranchId);
         const contextMode = String(
-          state?.contextMode || state?.authz?.contextMode || "STANDARD",
+          state?.contextMode || authz?.contextMode || "STANDARD",
         )
           .trim()
           .toUpperCase();
         const simulatedBranchId = normalizeBranchId(
-          state?.simulatedBranchId || state?.authz?.simulatedBranchId,
+          state?.simulatedBranchId || authz?.simulatedBranchId,
         );
 
         let activeBranchId = "";

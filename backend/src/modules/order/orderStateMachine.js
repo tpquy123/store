@@ -1,11 +1,5 @@
 import { mapStatusToStage } from "./Order.js";
 
-const MANAGER_ROLES = new Set(["ADMIN", "GLOBAL_ADMIN"]);
-const ORDER_MANAGER_ROLES = new Set(["ORDER_MANAGER"]);
-const WAREHOUSE_ROLES = new Set(["WAREHOUSE_MANAGER", "WAREHOUSE_STAFF"]);
-const SHIPPER_ROLES = new Set(["SHIPPER"]);
-const POS_ROLES = new Set(["POS_STAFF"]);
-
 // ✅ SAFE-CANCEL: Trạng thái hủy có trách nhiệm dành cho đơn đã thanh toán online
 export const PAID_ORDER_SAFE_CANCEL_STATUSES = new Set([
   "CANCEL_REFUND_PENDING",
@@ -88,48 +82,72 @@ const getTransitions = (order) => {
   return isInStoreOrder(order) ? IN_STORE_TRANSITIONS : ONLINE_TRANSITIONS;
 };
 
-const isRoleAllowedTarget = (role, targetStatus) => {
-  // Picking completion must be confirmed by warehouse manager only.
+const hasCapabilityValues = (capabilities = {}) =>
+  Boolean(
+    capabilities &&
+      Object.values(capabilities).some((value) => value === true)
+  );
+
+const isCapabilityAllowedTarget = (capabilities = {}, targetStatus) => {
   if (targetStatus === "PREPARING_SHIPMENT") {
-    return ["WAREHOUSE_MANAGER", "WAREHOUSE_STAFF"].includes(role);
+    return Boolean(capabilities.canCompleteInStorePick || capabilities.canManageWarehouse);
   }
 
-  if (MANAGER_ROLES.has(role)) {
+  if (capabilities.canManageAll) {
     return true;
   }
 
-  if (ORDER_MANAGER_ROLES.has(role)) {
-    return ["CONFIRMED", "PROCESSING", "SHIPPING", "CANCELLED", "CANCEL_REFUND_PENDING", "INCIDENT_REFUND_PROCESSING"].includes(
-      targetStatus
-    );
+  if (capabilities.canManageCoordinator) {
+    return [
+      "CONFIRMED",
+      "PROCESSING",
+      "SHIPPING",
+      "CANCELLED",
+      "CANCEL_REFUND_PENDING",
+      "INCIDENT_REFUND_PROCESSING",
+    ].includes(targetStatus);
   }
 
-  if (WAREHOUSE_ROLES.has(role)) {
-    return ["PROCESSING", "PREPARING", "PREPARING_SHIPMENT", "SHIPPING", "PENDING_PAYMENT", "CANCELLED", "CANCEL_REFUND_PENDING", "INCIDENT_REFUND_PROCESSING"].includes(
-      targetStatus
-    );
+  if (capabilities.canManageWarehouse) {
+    return [
+      "PROCESSING",
+      "PREPARING",
+      "PREPARING_SHIPMENT",
+      "SHIPPING",
+      "PENDING_PAYMENT",
+      "CANCELLED",
+      "CANCEL_REFUND_PENDING",
+      "INCIDENT_REFUND_PROCESSING",
+    ].includes(targetStatus);
   }
 
-  if (SHIPPER_ROLES.has(role)) {
+  if (capabilities.canManageTask) {
     return ["SHIPPING", "DELIVERED", "RETURNED"].includes(targetStatus);
   }
 
-  if (POS_ROLES.has(role)) {
+  if (capabilities.canManagePos) {
     return ["CONFIRMED", "PENDING_PAYMENT"].includes(targetStatus);
   }
 
   return false;
 };
 
-export const canTransitionOrderStatus = ({ order, currentStatus, targetStatus, role }) => {
+export const canTransitionOrderStatus = ({
+  order,
+  currentStatus,
+  targetStatus,
+  capabilities = {},
+}) => {
   if (currentStatus === targetStatus) {
     return { allowed: true };
   }
 
-  if (!isRoleAllowedTarget(role, targetStatus)) {
+  const isAllowedTarget = isCapabilityAllowedTarget(capabilities, targetStatus);
+
+  if (!isAllowedTarget) {
     return {
       allowed: false,
-      reason: `Role ${role} is not allowed to set ${targetStatus}`,
+      reason: `Permission set is not allowed to set ${targetStatus}`,
     };
   }
 
@@ -145,7 +163,7 @@ export const canTransitionOrderStatus = ({ order, currentStatus, targetStatus, r
   }
 
   // ADMIN has broad permissions but must still pass the paid-order guard above
-  if (MANAGER_ROLES.has(role)) {
+  if (capabilities.canManageAll) {
     return { allowed: true };
   }
 

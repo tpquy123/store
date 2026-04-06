@@ -2,7 +2,10 @@
 // FILE: backend/src/routes/cartRoutes.js
 // ============================================
 import express from "express";
-import { protect, restrictTo } from "../../middleware/authMiddleware.js";
+import { protect } from "../../middleware/authMiddleware.js";
+import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
+import { authorize } from "../../middleware/authz/authorize.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import {
   getCart,
   getCartCount,
@@ -15,8 +18,14 @@ import {
 
 const router = express.Router();
 
-router.use(protect);
-router.use(restrictTo("CUSTOMER"));
+router.use(
+  protect,
+  resolveAccessContext,
+  authorize(AUTHZ_ACTIONS.CART_MANAGE_SELF, {
+    scopeMode: "self",
+    resourceType: "CART",
+  })
+);
 
 router.get("/count", getCartCount);
 router.get("/", getCart);

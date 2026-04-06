@@ -83,6 +83,26 @@ const goodsReceiptSchema = new mongoose.Schema(
           type: Number,
           required: true,
         },
+        costPrice: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
+        basePrice: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
+        originalPrice: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
+        sellingPrice: {
+          type: Number,
+          min: 0,
+          default: 0,
+        },
         totalPrice: {
           type: Number,
           required: true,

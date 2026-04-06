@@ -1,17 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import ProductCard from "./ProductCard";
-import { iPhoneAPI, iPadAPI, macAPI, airPodsAPI, appleWatchAPI, accessoryAPI, universalProductAPI } from "../api/catalog.api";
-
-const CATEGORY_API_MAP = {
-  iPhone: { api: iPhoneAPI, route: "dien-thoai" },
-  iPad: { api: iPadAPI, route: "may-tinh-bang" },
-  Mac: { api: macAPI, route: "macbook" },
-  AirPods: { api: airPodsAPI, route: "tai-nghe" },
-  AppleWatch: { api: appleWatchAPI, route: "apple-watch" },
-  Accessory: { api: accessoryAPI, route: "phu-kien" },
-  Accessories: { api: accessoryAPI, route: "phu-kien" },
-};
+import { universalProductAPI } from "../api/catalog.api";
 
 const PRODUCT_TYPE_TO_ROUTE_MAP = {
   smartphone: "dien-thoai",
@@ -297,99 +287,37 @@ const SimilarProducts = ({ productId, category, currentProduct }) => {
         setError(null);
 
         const normalizedCat = normalizeCategory(category, currentProduct?.productType);
-        const categoryInfo = CATEGORY_API_MAP[normalizedCat] || CATEGORY_API_MAP[category];
         const currentProductTypeSlug = resolveProductTypeSlug(
           currentProduct?.productType,
           normalizedCat
         );
         const currentProductTypeId = extractProductTypeId(currentProduct?.productType);
-        const hasUniversalShape = Boolean(
-          currentProduct?.isUniversal || currentProduct?.productType
-        );
 
-        let categoryRoute =
-          categoryInfo?.route ||
-          PRODUCT_TYPE_TO_ROUTE_MAP[currentProductTypeSlug] ||
-          "products";
-
-        const fetchFromUniversalAPI = async () => {
-          const query = {
-            limit: 100,
-            status: "AVAILABLE",
-          };
-
-          if (currentProductTypeId) {
-            query.productType = currentProductTypeId;
-          }
-
-          const response = await universalProductAPI.getAll(query);
-          let list = extractProductsFromResponse(response);
-
-          if (!currentProductTypeId && currentProductTypeSlug) {
-            const hasProductTypeData = list.some((item) =>
-              Boolean(resolveProductTypeSlug(item?.productType, null))
-            );
-
-            if (hasProductTypeData) {
-              list = list.filter(
-                (item) =>
-                  resolveProductTypeSlug(item?.productType, null) ===
-                  currentProductTypeSlug
-              );
-            }
-          }
-
-          return list;
-        };
-
-        const fetchFromCategoryAPI = async () => {
-          if (!categoryInfo) return [];
-
-          const response = await categoryInfo.api.getAll({
-            limit: 100,
-            status: "AVAILABLE",
-          });
-
-          return extractProductsFromResponse(response);
-        };
-
-        let products = [];
-
-        if (hasUniversalShape) {
-          try {
-            products = await fetchFromUniversalAPI();
-          } catch (universalError) {
-            console.warn("[SimilarProducts] Universal fetch failed", universalError);
-          }
-
-          if ((!Array.isArray(products) || products.length === 0) && categoryInfo) {
-            try {
-              products = await fetchFromCategoryAPI();
-            } catch (categoryError) {
-              console.warn("[SimilarProducts] Category fallback failed", categoryError);
-            }
-          }
-        } else {
-          if (categoryInfo) {
-            try {
-              products = await fetchFromCategoryAPI();
-            } catch (categoryError) {
-              console.warn("[SimilarProducts] Category fetch failed", categoryError);
-            }
-          }
-
-          if (!Array.isArray(products) || products.length === 0) {
-            try {
-              products = await fetchFromUniversalAPI();
-            } catch (universalError) {
-              console.warn("[SimilarProducts] Universal fallback failed", universalError);
-            }
-          }
+        const query = { limit: 100 };
+        if (currentProductTypeId) {
+          query.productType = currentProductTypeId;
         }
+
+        const response = await universalProductAPI.getAll(query);
+        let products = extractProductsFromResponse(response);
 
         if (!Array.isArray(products)) {
           products = [];
         }
+
+        if (!currentProductTypeId && currentProductTypeSlug) {
+          const filtered = products.filter(
+            (item) =>
+              resolveProductTypeSlug(item?.productType, null) ===
+              currentProductTypeSlug
+          );
+          if (filtered.length > 0) {
+            products = filtered;
+          }
+        }
+
+        const categoryRoute =
+          PRODUCT_TYPE_TO_ROUTE_MAP[currentProductTypeSlug] || "products";
 
         products = products.filter((p) => String(p?._id) !== String(productId));
 

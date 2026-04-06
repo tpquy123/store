@@ -5,7 +5,7 @@ import { Button } from "@/shared/ui/button";
 import { ProductCard, ProductFilters } from "@/features/catalog";
 import { Loading } from "@/shared/ui/Loading";
 import { searchAPI } from "../api/search.api";
-import { useAuthStore } from "@/features/auth";
+import { usePermission } from "@/features/auth";
 import {
   createEmptyFilters,
   toggleFilterValue,
@@ -44,8 +44,9 @@ const SearchResultsPage = () => {
   );
   const [priceRange, setPriceRange] = useState({ min: "", max: "" });
 
-  const { user } = useAuthStore();
-  const isAdmin = user?.role === "ADMIN";
+  const canManageProducts = usePermission(["product.update", "product.delete"], {
+    mode: "any",
+  });
 
   useEffect(() => {
     setFilters(createEmptyFilters(SEARCH_AVAILABLE_FILTERS));
@@ -271,7 +272,7 @@ const SearchResultsPage = () => {
                   {currentProducts.map((product) => (
                     <div key={product._id} className="relative">
                       <ProductCard product={product} showVariantsBadge={true} />
-                      {isAdmin && product._relevance > 0 && (
+                      {canManageProducts && product._relevance > 0 && (
                         <div className="absolute top-2 right-2 bg-blue-600 text-white text-xs px-2 py-1 rounded-full font-bold">
                           {product._relevance}%
                         </div>

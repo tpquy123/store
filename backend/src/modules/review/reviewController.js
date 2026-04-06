@@ -7,6 +7,7 @@ import {
   updateReview as updateReviewService,
 } from "./reviewService.js";
 import { isReviewServiceError } from "./reviewErrors.js";
+import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 const handleReviewError = (res, error) => {
   if (isReviewServiceError(error)) {
@@ -128,9 +129,9 @@ export const deleteReview = async (req, res) => {
     }
 
     const isAuthor = String(review.userId) === String(req.user._id);
-    const isAdmin = req.user.role === "ADMIN";
+    const canModerate = req.authz?.permissions?.has(AUTHZ_ACTIONS.REVIEW_MODERATE);
 
-    if (!isAuthor && !isAdmin) {
+    if (!isAuthor && !canModerate) {
       return res.status(403).json({
         success: false,
         code: "REVIEW_DELETE_FORBIDDEN",

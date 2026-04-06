@@ -8,17 +8,46 @@ const DENY = (code, message) => ({
 
 const ALLOW = () => ({ allowed: true, code: "AUTHZ_ALLOWED" });
 
-const rolePermissions = (role) => ROLE_PERMISSIONS[role] || [];
-
+const normalizeRoleKey = (value) => String(value || "").trim().toUpperCase();
 const normalizePermissionKey = (value) => String(value || "").trim().toLowerCase();
 const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
 const normalizeScopeId = (value) => String(value || "").trim();
+const normalizeOperator = (value) => String(value || "").trim().toLowerCase();
+
+const resolveRolePermissions = (role, rolePermissionMap = null) => {
+  const normalizedRole = normalizeRoleKey(role);
+  const mapped = rolePermissionMap?.get(normalizedRole);
+  const mappedPermissions = Array.isArray(mapped?.permissions) ? mapped.permissions : [];
+
+  if (mappedPermissions.length === 0) {
+    return ROLE_PERMISSIONS[normalizedRole] || [];
+  }
+
+  if (
+    normalizedRole === "GLOBAL_ADMIN" &&
+    Array.isArray(ROLE_PERMISSIONS.GLOBAL_ADMIN) &&
+    ROLE_PERMISSIONS.GLOBAL_ADMIN.includes("*") &&
+    !mappedPermissions.some((permission) => normalizePermissionKey(permission?.key) === "*")
+  ) {
+    return [
+      ...mappedPermissions,
+      {
+        key: "*",
+        scopeType: "GLOBAL",
+        scopeId: "",
+      },
+    ];
+  }
+
+  return mappedPermissions;
+};
 
 const inferScopeTypeFromPermission = (permission) => {
   const key = normalizePermissionKey(permission);
   if (key === "*") return "GLOBAL";
   if (key.endsWith(".global")) return "GLOBAL";
   if (key.endsWith(".personal")) return "SELF";
+  if (key.endsWith(".self")) return "SELF";
   if (key.startsWith("task.")) return "SELF";
   return "BRANCH";
 };
@@ -58,6 +87,71 @@ const dedupeGrants = (grants = []) => {
   return Array.from(byKey.values());
 };
 
+const resolveResourceValue = (resource = {}, authz = {}, field = "") => {
+  const normalizedField = String(field || "").trim();
+  if (!normalizedField) return undefined;
+
+  const segments = normalizedField.split(".").filter(Boolean);
+  const roots = {
+    resource,
+    authz,
+    user: {
+      id: authz?.userId,
+      branchId: authz?.activeBranchId,
+    },
+  };
+
+  const [root, ...path] = segments;
+  let current = Object.prototype.hasOwnProperty.call(roots, root)
+    ? roots[root]
+    : resource?.[root];
+
+  for (const segment of path) {
+    if (current == null) return undefined;
+    current = current[segment];
+  }
+
+  return current;
+};
+
+const compareCondition = ({ actual, operator, expected }) => {
+  const normalizedOperator = normalizeOperator(operator || "eq");
+
+  switch (normalizedOperator) {
+    case "eq":
+      return actual === expected;
+    case "neq":
+      return actual !== expected;
+    case "lt":
+      return Number(actual) < Number(expected);
+    case "lte":
+      return Number(actual) <= Number(expected);
+    case "gt":
+      return Number(actual) > Number(expected);
+    case "gte":
+      return Number(actual) >= Number(expected);
+    case "in":
+      return Array.isArray(expected) && expected.includes(actual);
+    case "includes":
+      return Array.isArray(actual) && actual.includes(expected);
+    default:
+      return false;
+  }
+};
+
+const evaluateGrantConditions = ({ grant, resource = {}, authz = {} } = {}) => {
+  const conditions = Array.isArray(grant?.conditions) ? grant.conditions : [];
+  if (!conditions.length) return true;
+
+  return conditions.every((condition) =>
+    compareCondition({
+      actual: resolveResourceValue(resource, authz, condition?.field),
+      operator: condition?.operator,
+      expected: condition?.value,
+    })
+  );
+};
+
 export const buildPermissionGrantMap = (grants = []) => {
   const map = new Map();
   for (const grant of dedupeGrants(grants)) {
@@ -69,37 +163,84 @@ export const buildPermissionGrantMap = (grants = []) => {
   return map;
 };
 
-export const buildRolePermissionGrants = (authz = {}) => {
+export const buildRolePermissionGrants = (authz = {}, { rolePermissionMap = null } = {}) => {
   const grants = [];
   const activeBranchId = normalizeScopeId(authz?.activeBranchId);
   const userId = normalizeScopeId(authz?.userId);
+  const roleAssignments = Array.isArray(authz?.roleAssignments) ? authz.roleAssignments : [];
 
-  for (const role of authz?.systemRoles || []) {
-    for (const permission of rolePermissions(role)) {
+  const appendRoleGrants = ({
+    roleKey,
+    assignmentScopeType = "",
+    assignmentScopeId = "",
+    sourceType = "ROLE_ASSIGNMENT",
+  } = {}) => {
+    for (const permission of resolveRolePermissions(roleKey, rolePermissionMap)) {
+      const key = typeof permission === "string" ? permission : permission?.key;
+      const inferredScopeType =
+        typeof permission === "string"
+          ? inferScopeTypeFromPermission(key)
+          : normalizeScopeType(permission?.scopeType || inferScopeTypeFromPermission(key));
+      const normalizedAssignmentScopeType = normalizeScopeType(assignmentScopeType);
+      const normalizedAssignmentScopeId = normalizeScopeId(assignmentScopeId);
+      const explicitScopeId = normalizeScopeId(permission?.scopeId);
+      let scopeId = explicitScopeId;
+
+      if (!scopeId) {
+        if (inferredScopeType === "BRANCH" && normalizedAssignmentScopeType === "BRANCH") {
+          scopeId = normalizedAssignmentScopeId;
+        } else if (
+          (inferredScopeType === "SELF" || inferredScopeType === "TASK") &&
+          (normalizedAssignmentScopeType === "SELF" || normalizedAssignmentScopeType === "TASK")
+        ) {
+          scopeId = normalizedAssignmentScopeId || userId;
+        } else if (inferredScopeType === "RESOURCE" && normalizedAssignmentScopeType === "RESOURCE") {
+          scopeId = normalizedAssignmentScopeId;
+        } else if (inferredScopeType === "SELF" || inferredScopeType === "TASK") {
+          scopeId = userId;
+        }
+      }
+
       grants.push(
         createGrant({
-          key: permission,
-          scopeType: permission === "*" ? "GLOBAL" : inferScopeTypeFromPermission(permission),
-          sourceType: "SYSTEM",
-          source: role,
+          key,
+          scopeType: key === "*" ? "GLOBAL" : inferredScopeType,
+          scopeId,
+          sourceType,
+          source: roleKey,
         })
       );
     }
+  };
+
+  if (roleAssignments.length > 0) {
+    for (const assignment of roleAssignments) {
+      appendRoleGrants({
+        roleKey: assignment?.roleKey || assignment?.role?.key,
+        assignmentScopeType: assignment?.scopeType,
+        assignmentScopeId: assignment?.scopeRef || assignment?.scopeId,
+        sourceType: "ROLE_ASSIGNMENT",
+      });
+    }
+
+    return dedupeGrants(grants);
+  }
+
+  for (const role of authz?.systemRoles || []) {
+    appendRoleGrants({
+      roleKey: role,
+      assignmentScopeType: "GLOBAL",
+      sourceType: "SYSTEM",
+    });
   }
 
   for (const role of authz?.taskRoles || []) {
-    for (const permission of rolePermissions(role)) {
-      const inferredScopeType = inferScopeTypeFromPermission(permission);
-      grants.push(
-        createGrant({
-          key: permission,
-          scopeType: inferredScopeType,
-          scopeId: inferredScopeType === "SELF" ? userId : "",
-          sourceType: "TASK",
-          source: role,
-        })
-      );
-    }
+    appendRoleGrants({
+      roleKey: role,
+      assignmentScopeType: "TASK",
+      assignmentScopeId: userId,
+      sourceType: "TASK",
+    });
   }
 
   if (activeBranchId) {
@@ -108,45 +249,13 @@ export const buildRolePermissionGrants = (authz = {}) => {
     );
     if (activeAssignment) {
       for (const role of activeAssignment.roles || []) {
-        for (const permission of rolePermissions(role)) {
-          const inferredScopeType = inferScopeTypeFromPermission(permission);
-          grants.push(
-            createGrant({
-              key: permission,
-              scopeType: inferredScopeType,
-              scopeId:
-                inferredScopeType === "BRANCH"
-                  ? activeBranchId
-                  : inferredScopeType === "SELF"
-                    ? userId
-                    : "",
-              sourceType: "BRANCH_ROLE",
-              source: role,
-            })
-          );
-        }
+        appendRoleGrants({
+          roleKey: role,
+          assignmentScopeType: "BRANCH",
+          assignmentScopeId: activeBranchId,
+          sourceType: "BRANCH_ROLE",
+        });
       }
-    }
-  }
-
-  const hasV2Data =
-    (authz?.systemRoles || []).length > 0 ||
-    (authz?.taskRoles || []).length > 0 ||
-    (authz?.branchAssignments || []).length > 0;
-  const hasExplicitPermissionMode = String(authz?.permissionMode || "").toUpperCase() === "EXPLICIT";
-
-  if (authz?.role && !hasV2Data && !hasExplicitPermissionMode) {
-    for (const permission of rolePermissions(authz.role)) {
-      const inferredScopeType = inferScopeTypeFromPermission(permission);
-      grants.push(
-        createGrant({
-          key: permission,
-          scopeType: inferredScopeType,
-          scopeId: inferredScopeType === "SELF" ? userId : "",
-          sourceType: "LEGACY_ROLE",
-          source: authz.role,
-        })
-      );
     }
   }
 
@@ -158,13 +267,14 @@ export const buildPermissionSet = (authz) => {
   const activeBranchId = normalizeScopeId(authz?.activeBranchId);
   const userId = normalizeScopeId(authz?.userId);
   const explicitMode = String(authz?.permissionMode || "").trim().toUpperCase() === "EXPLICIT";
+  const rolePermissionMap = authz?.rolePermissionMap instanceof Map ? authz.rolePermissionMap : null;
 
   const grants =
     Array.isArray(authz?.permissionGrants)
       ? explicitMode || authz.permissionGrants.length > 0
         ? dedupeGrants(authz.permissionGrants)
         : buildRolePermissionGrants(authz)
-      : buildRolePermissionGrants(authz);
+      : buildRolePermissionGrants(authz, { rolePermissionMap });
 
   for (const grant of grants) {
     if (!grant) continue;
@@ -187,6 +297,20 @@ export const buildPermissionSet = (authz) => {
 
     if (grant.scopeType === "SELF") {
       if (!grant.scopeId || (userId && grant.scopeId === userId)) {
+        permissions.add(grant.key);
+      }
+      continue;
+    }
+
+    if (grant.scopeType === "TASK") {
+      if (!grant.scopeId || (userId && grant.scopeId === userId)) {
+        permissions.add(grant.key);
+      }
+      continue;
+    }
+
+    if (grant.scopeType === "RESOURCE") {
+      if (!grant.scopeId) {
         permissions.add(grant.key);
       }
     }
@@ -228,27 +352,53 @@ export const hasPermission = (authz, action, { mode = "branch", resource = null 
   const targetAssigneeId = normalizeScopeId(
     resource?.assigneeId || resource?.userId || authz?.userId
   );
+  const targetResourceId = normalizeScopeId(
+    resource?.resourceId || resource?._id || resource?.id
+  );
 
   for (const rawGrant of grants) {
     const grant = createGrant(rawGrant);
     if (!grant) continue;
 
     if (grant.key === "*") {
-      return true;
+      if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
     }
 
     if (grant.scopeType === "GLOBAL") {
-      return true;
+      if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
     }
 
     if (grant.scopeType === "BRANCH") {
-      if (!grant.scopeId) return true;
-      if (targetBranchId && grant.scopeId === targetBranchId) return true;
+      if (!grant.scopeId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
+      if (targetBranchId && grant.scopeId === targetBranchId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
     }
 
     if (grant.scopeType === "SELF") {
-      if (!grant.scopeId) return true;
-      if (targetAssigneeId && grant.scopeId === targetAssigneeId) return true;
+      if (!grant.scopeId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
+      if (targetAssigneeId && grant.scopeId === targetAssigneeId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
+    }
+
+    if (grant.scopeType === "TASK") {
+      if (!grant.scopeId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
+      if (targetAssigneeId && grant.scopeId === targetAssigneeId) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
+    }
+
+    if (grant.scopeType === "RESOURCE") {
+      if (!grant.scopeId || (targetResourceId && grant.scopeId === targetResourceId)) {
+        if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
+      }
     }
   }
 

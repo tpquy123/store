@@ -85,6 +85,29 @@ const deviceSchema = new mongoose.Schema(
       trim: true,
       default: "",
     },
+    basePrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    originalPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    sellingPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    costPrice: {
+      type: Number,
+      min: 0,
+      default: 0,
+    },
+    priceUpdatedAt: {
+      type: Date,
+    },
     imei: {
       type: String,
       trim: true,
