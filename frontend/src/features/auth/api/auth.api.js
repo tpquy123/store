@@ -12,6 +12,6 @@ export const authAPI = {
   changePassword: (data) => api.put("/auth/change-password", data),
   updateAvatar: (avatar) => api.put("/auth/avatar", { avatar }),
   checkCustomer: (phoneNumber) =>
-    api.get(`/auth/check-customer?phoneNumber=${phoneNumber}`),
+    api.get("/auth/check-customer", { params: { phoneNumber } }),
   quickRegister: (data) => api.post("/auth/quick-register", data),
 };

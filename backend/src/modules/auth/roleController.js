@@ -1,5 +1,6 @@
 import Role from "./Role.js";
 import Permission from "./Permission.js";
+import UserRoleAssignment from "./UserRoleAssignment.js";
 import { invalidateRolePermissionCache } from "../../authz/rolePermissionService.js";
 import { clearPermissionCache } from "../../authz/effectivePermissionCache.js";
 
@@ -10,6 +11,13 @@ const invalidateAuthzCaches = () => {
   invalidateRolePermissionCache();
   clearPermissionCache();
 };
+
+const countActiveRoleAssignments = async (roleKey) =>
+  UserRoleAssignment.countDocuments({
+    roleKey: normalizeRoleKey(roleKey),
+    status: "ACTIVE",
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  });
 
 const toBoolean = (value) => {
   if (typeof value === "boolean") return value;
@@ -202,11 +210,14 @@ export const updateRole = async (req, res) => {
 
     await role.save();
     invalidateAuthzCaches();
+    const affectedActiveAssignments = await countActiveRoleAssignments(role.key);
 
     return res.json({
       success: true,
       data: {
         role: buildRolePayload(role),
+        cacheInvalidated: true,
+        affectedActiveAssignments,
       },
     });
   } catch (error) {
@@ -258,11 +269,14 @@ export const patchRole = async (req, res) => {
 
     await role.save();
     invalidateAuthzCaches();
+    const affectedActiveAssignments = await countActiveRoleAssignments(role.key);
 
     return res.json({
       success: true,
       data: {
         role: buildRolePayload(role),
+        cacheInvalidated: true,
+        affectedActiveAssignments,
       },
     });
   } catch (error) {

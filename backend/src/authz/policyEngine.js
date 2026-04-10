@@ -266,14 +266,11 @@ export const buildPermissionSet = (authz) => {
   const permissions = new Set();
   const activeBranchId = normalizeScopeId(authz?.activeBranchId);
   const userId = normalizeScopeId(authz?.userId);
-  const explicitMode = String(authz?.permissionMode || "").trim().toUpperCase() === "EXPLICIT";
   const rolePermissionMap = authz?.rolePermissionMap instanceof Map ? authz.rolePermissionMap : null;
 
   const grants =
     Array.isArray(authz?.permissionGrants)
-      ? explicitMode || authz.permissionGrants.length > 0
-        ? dedupeGrants(authz.permissionGrants)
-        : buildRolePermissionGrants(authz)
+      ? dedupeGrants(authz.permissionGrants)
       : buildRolePermissionGrants(authz, { rolePermissionMap });
 
   for (const grant of grants) {
@@ -289,7 +286,7 @@ export const buildPermissionSet = (authz) => {
     }
 
     if (grant.scopeType === "BRANCH") {
-      if (!grant.scopeId || (activeBranchId && grant.scopeId === activeBranchId)) {
+      if (!activeBranchId || !grant.scopeId || grant.scopeId === activeBranchId) {
         permissions.add(grant.key);
       }
       continue;
@@ -369,7 +366,7 @@ export const hasPermission = (authz, action, { mode = "branch", resource = null 
     }
 
     if (grant.scopeType === "BRANCH") {
-      if (!grant.scopeId) {
+      if (!grant.scopeId || !targetBranchId) {
         if (evaluateGrantConditions({ grant: rawGrant, resource, authz })) return true;
       }
       if (targetBranchId && grant.scopeId === targetBranchId) {

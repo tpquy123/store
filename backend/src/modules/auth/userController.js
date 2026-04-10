@@ -58,6 +58,13 @@ const toAppError = (status, code, message, details = null) => {
   return error;
 };
 
+const collectDirectPermissionKeys = (grants = []) =>
+  toUniqueStrings(
+    (Array.isArray(grants) ? grants : []).map((grant) =>
+      normalizeText(grant?.key).toLowerCase(),
+    ),
+  ).sort();
+
 const collectBranchIds = (payload = {}) => {
   const directBranchIds = Array.isArray(payload.branchIds)
     ? payload.branchIds
@@ -224,7 +231,7 @@ const syncExplicitPermissionsForUser = async ({
       .slice(0, 12),
     templateKeys,
     branchIdCount: branchIds.length,
-    permissionMode: user?.permissionMode || "",
+    legacyPermissionMode: user?.permissionMode || "",
     reason,
   });
 
@@ -298,15 +305,14 @@ const syncExplicitPermissionsForUser = async ({
     reason: reason || "user_permission_sync",
   });
 
-  const previousPermissionMode = String(
-    user.permissionMode || "ROLE_FALLBACK",
-  ).toUpperCase();
-  const modeChanged = previousPermissionMode !== "EXPLICIT";
-  if (modeChanged) {
-    user.permissionMode = "EXPLICIT";
-  }
+  const legacyStateChanged =
+    String(user.permissionMode || "ROLE_FALLBACK").toUpperCase() !== "ROLE_FALLBACK" ||
+    (Array.isArray(user.permissions) && user.permissions.length > 0);
 
-  if (result.grantedCount > 0 || result.revokedCount > 0 || modeChanged) {
+  user.permissionMode = "ROLE_FALLBACK";
+  user.permissions = [];
+
+  if (result.grantedCount > 0 || result.revokedCount > 0 || legacyStateChanged) {
     user.permissionsVersion = Number(user.permissionsVersion || 1) + 1;
     await user.save();
   }
@@ -316,7 +322,7 @@ const syncExplicitPermissionsForUser = async ({
     grantedCount: result.grantedCount || 0,
     revokedCount: result.revokedCount || 0,
     assignmentCount: assignments.length,
-    permissionMode: user?.permissionMode || "",
+    legacyPermissionMode: user?.permissionMode || "",
     reason,
   });
 
@@ -1102,7 +1108,7 @@ export const updateUserRoles = async (req, res) => {
       data: {
         user: targetUser,
         authz: {
-          permissionMode: effective.permissionMode || "HYBRID",
+          permissionMode: effective.permissionMode || "ROLE_FALLBACK",
           activeBranchId: effective.activeBranchId || "",
           allowedBranchIds: effective.allowedBranchIds || [],
           roleKeys: effective.roleKeys || [],
@@ -1252,7 +1258,7 @@ export const getEffectivePermissionsForUser = async (req, res) => {
       success: true,
       data: {
         userId: String(targetUser._id),
-        permissionMode: effective.permissionMode || "HYBRID",
+        permissionMode: effective.permissionMode || "ROLE_FALLBACK",
         activeBranchId: effective.activeBranchId || "",
         allowedBranchIds: effective.allowedBranchIds || [],
         roleKeys: effective.roleKeys || [],
@@ -1308,11 +1314,9 @@ export const getUserAuthorization = async (req, res) => {
         roleAssignments: Array.isArray(effective.roleAssignments)
           ? effective.roleAssignments
           : [],
-        directPermissions: Array.isArray(targetUser.permissions)
-          ? targetUser.permissions
-          : [],
+        directPermissions: collectDirectPermissionKeys(directPermissionGrants),
         directPermissionGrants,
-        permissionMode: effective.permissionMode || "HYBRID",
+        permissionMode: effective.permissionMode || "ROLE_FALLBACK",
         activeBranchId: effective.activeBranchId || "",
         allowedBranchIds: effective.allowedBranchIds || [],
         permissions: Array.from(effective.permissions || []).sort(),
@@ -1470,9 +1474,7 @@ export const getUserPermissionGrants = async (req, res) => {
       success: true,
       data: {
         userId: String(targetUser._id),
-        directPermissions: Array.isArray(targetUser.permissions)
-          ? targetUser.permissions
-          : [],
+        directPermissions: collectDirectPermissionKeys(directPermissionGrants),
         permissionGrants: directPermissionGrants,
       },
     });

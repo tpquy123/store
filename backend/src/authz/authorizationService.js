@@ -1,141 +1,16 @@
-import { normalizeUserAccess } from "./userAccessResolver.js";
-import {
-  buildPermissionGrantMap,
-  buildPermissionSet,
-  buildRolePermissionGrants,
-  evaluatePolicy,
-} from "./policyEngine.js";
-import {
-  collectBranchScopeIdsFromGrants,
-  loadActiveUserPermissionGrants,
-} from "./userPermissionService.js";
-import { getOrLoadEffectiveContext } from "./effectivePermissionCache.js";
-import { loadRolePermissionMap } from "./rolePermissionService.js";
-import {
-  buildLegacyAuthzMirror,
-  resolveUserRoleAssignments,
-} from "./roleAssignmentService.js";
+import { evaluatePolicy } from "./policyEngine.js";
+import { resolvePermissionContext } from "./permissionResolver.js";
 import User from "../modules/auth/User.js";
-
-const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
-const normalizeScopeId = (value) => String(value || "").trim();
-const normalizePermissionKey = (value) => String(value || "").trim().toLowerCase();
-const normalizePermissionMode = (value) => {
-  const normalized = String(value || "").trim().toUpperCase();
-  if (["ROLE_FALLBACK", "EXPLICIT", "HYBRID"].includes(normalized)) {
-    return normalized;
-  }
-  return "ROLE_FALLBACK";
-};
-
-const toUniqueStrings = (items = []) =>
-  Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
-
-const dedupePermissionGrants = (grants = []) => {
-  const byKey = new Map();
-  for (const grant of grants) {
-    const key = normalizePermissionKey(grant?.key);
-    if (!key) continue;
-    const scopeType = normalizeScopeType(grant?.scopeType || "GLOBAL");
-    const scopeId = normalizeScopeId(grant?.scopeId);
-    const dedupeKey = `${key}|${scopeType}|${scopeId}`;
-    byKey.set(dedupeKey, {
-      ...grant,
-      key,
-      scopeType,
-      scopeId,
-    });
-  }
-  return Array.from(byKey.values());
-};
-
-const mergeCanonicalAssignments = ({ normalized, assignments = [], activeBranchId = "" }) => {
-  if (!assignments.length) {
-    return normalized;
-  }
-
-  const mirror = buildLegacyAuthzMirror({
-    assignments,
-    fallbackRole: normalized.role || "USER",
-    primaryBranchId: activeBranchId || normalized.defaultBranchId || "",
-  });
-
-  return {
-    ...normalized,
-    role: mirror.legacyRole || normalized.role,
-    roles: mirror.roles?.length ? mirror.roles : normalized.roles || [],
-    roleKeys: mirror.roleKeys || [],
-    systemRoles: mirror.systemRoles || normalized.systemRoles || [],
-    taskRoles: mirror.taskRoles || normalized.taskRoles || [],
-    branchAssignments: mirror.branchAssignments || normalized.branchAssignments || [],
-    allowedBranchIds:
-      mirror.branchAssignments?.map((assignment) => normalizeScopeId(assignment.storeId)) ||
-      normalized.allowedBranchIds ||
-      [],
-    defaultBranchId:
-      mirror.primaryBranchId || activeBranchId || normalized.defaultBranchId || "",
-  };
-};
 
 export const resolveEffectiveAccessContext = async ({
   user,
   normalizedAccess = null,
   activeBranchId = "",
 } = {}) => {
-  const normalized = normalizedAccess || normalizeUserAccess(user);
-  const effectiveActiveBranchId = normalizeScopeId(activeBranchId || normalized.defaultBranchId);
-  const userId = normalizeScopeId(normalized.userId);
-  const permissionsVersion = Number(normalized.permissionsVersion || 1);
-
-  const cacheKey = `${userId}:${permissionsVersion}:${effectiveActiveBranchId || "_"}:effective`;
-  return getOrLoadEffectiveContext(cacheKey, async () => {
-    const roleAssignments = await resolveUserRoleAssignments({ user });
-    const normalizedWithAssignments = mergeCanonicalAssignments({
-      normalized,
-      assignments: roleAssignments,
-      activeBranchId: effectiveActiveBranchId,
-    });
-    const rolePermissionMap = await loadRolePermissionMap();
-    const explicitGrants = await loadActiveUserPermissionGrants({
-      userId: normalizedWithAssignments.userId,
-      permissionsVersion: normalizedWithAssignments.permissionsVersion,
-    });
-
-    const roleGrants = buildRolePermissionGrants({
-      ...normalizedWithAssignments,
-      activeBranchId: effectiveActiveBranchId,
-    }, { rolePermissionMap });
-
-    const permissionMode = normalizePermissionMode(normalizedWithAssignments.permissionMode);
-    const permissionGrants =
-      permissionMode === "EXPLICIT"
-        ? dedupePermissionGrants(explicitGrants)
-        : permissionMode === "HYBRID"
-          ? dedupePermissionGrants([...roleGrants, ...explicitGrants])
-          : explicitGrants.length > 0
-            ? dedupePermissionGrants(explicitGrants)
-            : dedupePermissionGrants(roleGrants);
-
-    const explicitBranchIds = collectBranchScopeIdsFromGrants(permissionGrants);
-    const allowedBranchIds = toUniqueStrings([
-      ...(normalizedWithAssignments.allowedBranchIds || []),
-      ...explicitBranchIds,
-    ]);
-
-    const authzSnapshot = {
-      ...normalizedWithAssignments,
-      activeBranchId: effectiveActiveBranchId,
-      allowedBranchIds,
-      permissionMode,
-      permissionGrants,
-      rolePermissionMap,
-      roleAssignments,
-      roleKeys: normalizedWithAssignments.roleKeys || [],
-    };
-    authzSnapshot.permissions = buildPermissionSet(authzSnapshot);
-    authzSnapshot.permissionGrantMap = buildPermissionGrantMap(permissionGrants);
-
-    return authzSnapshot;
+  return resolvePermissionContext({
+    user,
+    normalizedAccess,
+    activeBranchId,
   });
 };
 

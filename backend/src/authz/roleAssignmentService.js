@@ -191,6 +191,7 @@ export const loadActiveUserRoleAssignments = async ({ userId } = {}) => {
   const rows = await UserRoleAssignment.find({
     userId: normalizedUserId,
     status: "ACTIVE",
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
   })
     .populate("roleId", "_id key name scopeType permissions isActive isSystem metadata")
     .select("userId roleId roleKey scopeType scopeRef status assignedAt assignedBy expiresAt metadata")

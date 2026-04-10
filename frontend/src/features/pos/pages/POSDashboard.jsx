@@ -86,6 +86,22 @@ const POSDashboard = () => {
     return `${compactName}@${last3Digits}`;
   };
 
+  const isValidPhoneNumber = (phoneNumber) =>
+    /^0\d{9}$/.test(String(phoneNumber || "").trim());
+
+  const handleCustomerPhoneChange = (event) => {
+    const nextPhone = event.target.value;
+
+    setCustomerPhone(nextPhone);
+    setShowCustomerCheckDialog(false);
+    setCustomerExists((previousExists) => {
+      if (previousExists === true) {
+        setCustomerName("");
+      }
+      return null;
+    });
+  };
+
   // ============================================
   // LOAD PRODUCT TYPES
   // ============================================
@@ -448,6 +464,11 @@ const POSDashboard = () => {
         return;
       }
 
+      if (!isValidPhoneNumber(customerPhone)) {
+        toast.error("Sá»‘ Ä‘iá»‡n thoáº¡i khÃ´ng há»£p lá»‡");
+        return;
+      }
+
       setIsLoading(true);
       const res = await authAPI.quickRegister({
         fullName: customerName,
@@ -456,6 +477,8 @@ const POSDashboard = () => {
 
       if (res.data.success) {
         setCustomerExists(true);
+        setCustomerName(res.data.customer?.fullName || customerName.trim());
+        res.data.password = res.data.temporaryPassword || res.data.password;
         toast.success(`Đăng ký thành công! Mật khẩu: ${res.data.password}`);
       }
     } catch (e) {
@@ -466,7 +489,15 @@ const POSDashboard = () => {
   };
 
   const handleCheckCustomer = async () => {
-    if (!customerPhone.trim()) return;
+    if (!customerPhone.trim()) {
+      toast.error("Vui lÃ²ng nháº­p sá»‘ Ä‘iá»‡n thoáº¡i");
+      return;
+    }
+
+    if (!isValidPhoneNumber(customerPhone)) {
+      toast.error("Sá»‘ Ä‘iá»‡n thoáº¡i khÃ´ng há»£p lá»‡");
+      return;
+    }
 
     try {
       setCheckingCustomer(true);
@@ -484,6 +515,7 @@ const POSDashboard = () => {
       
     } catch (error) {
       console.error("Error checking customer:", error);
+      toast.error(error.response?.data?.message || "KhÃ´ng thá»ƒ kiá»ƒm tra khÃ¡ch hÃ ng");
     } finally {
       setCheckingCustomer(false);
     }
@@ -587,7 +619,7 @@ const POSDashboard = () => {
                  <Input 
                   placeholder="Số điện thoại" 
                   value={customerPhone} 
-                  onChange={e => setCustomerPhone(e.target.value)} 
+                  onChange={handleCustomerPhoneChange}
                  />
                  {customerExists === true && <CheckCircle className="w-4 h-4 text-green-500 absolute right-3 top-3" />}
                  {customerExists === false && <XCircle className="w-4 h-4 text-red-500 absolute right-3 top-3" />}

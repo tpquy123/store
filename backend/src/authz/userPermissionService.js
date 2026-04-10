@@ -299,23 +299,6 @@ export const loadActiveUserPermissionGrants = async ({
   return grants;
 };
 
-const syncUserPermissionReadModel = async (userId) => {
-  const directPermissionKeys = await UserPermissionGrant.distinct("permissionKey", {
-    userId,
-    status: "ACTIVE",
-    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
-  });
-
-  await User.updateOne(
-    { _id: userId },
-    {
-      $set: {
-        permissions: directPermissionKeys.map(normalizePermissionKey),
-      },
-    }
-  );
-};
-
 export const applyUserPermissionAssignments = async ({
   targetUserId,
   assignments = [],
@@ -418,7 +401,14 @@ export const applyUserPermissionAssignments = async ({
   }
 
   invalidateUserPermissionCache(normalizedTargetUserId);
-  await syncUserPermissionReadModel(normalizedTargetUserId);
+  await User.updateOne(
+    { _id: normalizedTargetUserId },
+    {
+      $set: {
+        permissions: [],
+      },
+    },
+  );
 
   if (req) {
     for (const granted of grantedEntries) {

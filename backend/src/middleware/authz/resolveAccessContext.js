@@ -24,7 +24,6 @@ export const resolveAccessContext = async (req, res, next) => {
     );
   }
 
-  const isGlobalAdmin = normalized.isGlobalAdmin;
   const bootstrapContext = await resolveEffectiveAccessContext({
     user: req.user,
     normalizedAccess: normalized,
@@ -32,6 +31,8 @@ export const resolveAccessContext = async (req, res, next) => {
   });
   const permissionSet =
     bootstrapContext?.permissions instanceof Set ? bootstrapContext.permissions : new Set();
+  const isGlobalAdmin =
+    Boolean(bootstrapContext?.isGlobalAdmin) || permissionSet.has("*") || normalized.isGlobalAdmin;
   const isCustomer =
     permissionSet.has(AUTHZ_ACTIONS.ACCOUNT_PROFILE_UPDATE_SELF) ||
     permissionSet.has(AUTHZ_ACTIONS.CART_MANAGE_SELF) ||
@@ -43,7 +44,9 @@ export const resolveAccessContext = async (req, res, next) => {
     permissionSet.has(AUTHZ_ACTIONS.TASK_UPDATE) ||
     permissionSet.has(AUTHZ_ACTIONS.ORDER_VIEW_ASSIGNED) ||
     permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE_TASK);
-  const allowedBranchIds = bootstrapContext.allowedBranchIds || [];
+  const allowedBranchIds = Array.isArray(bootstrapContext?.allowedBranchIds)
+    ? bootstrapContext.allowedBranchIds
+    : [];
   const requiresBranchAssignment = Boolean(
     normalized.requiresBranchAssignment || allowedBranchIds.length > 0
   );

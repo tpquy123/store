@@ -146,6 +146,15 @@ const resolveHomeRoute = ({ roleKeys = [], permissions = [] } = {}) => {
   return "/";
 };
 
+const collectDirectPermissionKeys = (grants = []) =>
+  Array.from(
+    new Set(
+      (Array.isArray(grants) ? grants : [])
+        .map((grant) => String(grant?.key || "").trim().toLowerCase())
+        .filter(Boolean),
+    ),
+  ).sort();
+
 const buildEffectivePermissionsPayload = async (user, resolvedContext = null) => {
   const normalized = resolvedContext || normalizeUserAccess(user);
   const alreadyResolved =
@@ -177,6 +186,9 @@ const buildEffectivePermissionsPayload = async (user, resolvedContext = null) =>
       : Array.from(
           new Set(roleAssignments.map((assignment) => normalizeRoleKey(assignment.roleKey)).filter(Boolean))
         );
+  const directPermissionGrants = Array.isArray(effective.directPermissionGrants)
+    ? effective.directPermissionGrants
+    : [];
 
   const authorizationPayload = {
     authzVersion: effective.authzVersion,
@@ -189,7 +201,7 @@ const buildEffectivePermissionsPayload = async (user, resolvedContext = null) =>
     systemRoles: effective.systemRoles,
     taskRoles: effective.taskRoles,
     branchAssignments: effective.branchAssignments,
-    directPermissions: Array.isArray(user?.permissions) ? user.permissions : [],
+    directPermissions: collectDirectPermissionKeys(directPermissionGrants),
     allowedBranchIds: effective.allowedBranchIds,
     activeBranchId: effective.activeBranchId || effective.defaultBranchId || "",
     simulatedBranchId: effective.simulatedBranchId || "",
@@ -197,7 +209,7 @@ const buildEffectivePermissionsPayload = async (user, resolvedContext = null) =>
     noBranchAssigned: Boolean(effective.noBranchAssigned),
     requiresBranchAssignment: Boolean(effective.requiresBranchAssignment),
     isGlobalAdmin: Boolean(effective.isGlobalAdmin),
-    permissionMode: String(effective.permissionMode || "HYBRID"),
+    permissionMode: String(effective.permissionMode || "ROLE_FALLBACK"),
     permissionGrants: Array.isArray(effective.permissionGrants)
       ? effective.permissionGrants.map((grant) => ({
           key: grant.key,

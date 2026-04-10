@@ -383,7 +383,7 @@ const ProductsPage = () => {
             {/* Scrollable horizontal tabs */}
             <div className="relative -mx-1">
               <div className="overflow-x-auto scrollbar-hide pb-2">
-                <TabsList className="inline-flex gap-2 bg-transparent p-0 h-auto">
+                <TabsList className="inline-flex justify-start w-max gap-2 bg-transparent p-0 h-auto">
                   {productTypes.map((type) => (
                     <TabsTrigger 
                       key={type._id} 

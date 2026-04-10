@@ -21,6 +21,18 @@ import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 const router = express.Router();
 
 const resolveUserScopeMode = (req) => (req.authz?.isGlobalAdmin ? "global" : "branch");
+const requireCustomerLookup = checkPermission(null, {
+  anyOf: [AUTHZ_ACTIONS.USERS_READ_BRANCH, AUTHZ_ACTIONS.POS_ORDER_CREATE],
+  scopeMode: resolveUserScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "USER",
+});
+const requireCustomerQuickRegister = checkPermission(null, {
+  anyOf: [AUTHZ_ACTIONS.USERS_MANAGE_BRANCH, AUTHZ_ACTIONS.POS_ORDER_CREATE],
+  scopeMode: resolveUserScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "USER",
+});
 
 router.post("/register", register);
 router.post("/login", login);
@@ -36,22 +48,14 @@ router.get(
   "/check-customer",
   protect,
   resolveAccessContext,
-  checkPermission(AUTHZ_ACTIONS.USERS_READ_BRANCH, {
-    scopeMode: resolveUserScopeMode,
-    requireActiveBranchFor: ["branch"],
-    resourceType: "USER",
-  }),
+  requireCustomerLookup,
   checkCustomerByPhone
 );
 router.post(
   "/quick-register",
   protect,
   resolveAccessContext,
-  checkPermission(AUTHZ_ACTIONS.USERS_MANAGE_BRANCH, {
-    scopeMode: resolveUserScopeMode,
-    requireActiveBranchFor: ["branch"],
-    resourceType: "USER",
-  }),
+  requireCustomerQuickRegister,
   quickRegisterCustomer
 );
 

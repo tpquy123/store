@@ -1,4 +1,7 @@
-const DEFAULT_TTL_MS = Number(process.env.AUTHZ_PERMISSION_CACHE_TTL_MS || 30_000);
+const DEFAULT_TTL_MS = Number(
+  process.env.AUTHZ_PERMISSION_CACHE_TTL_MS ||
+    (process.env.NODE_ENV === "development" ? 10_000 : 30_000),
+);
 
 const rawGrantCache = new Map();
 const effectiveContextCache = new Map();

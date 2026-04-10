@@ -23,10 +23,20 @@ const requireStoreManage = authorize(AUTHZ_ACTIONS.STORE_MANAGE, {
   requireActiveBranchFor: ["branch"],
   resourceType: "STORE",
 });
+const requireStoreListRead = authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.STORE_MANAGE, AUTHZ_ACTIONS.ORDERS_READ],
+  scopeMode: resolveStoreScopeMode,
+  resourceType: "STORE",
+});
+const requireStoreDetailRead = authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.STORE_MANAGE, AUTHZ_ACTIONS.INVENTORY_READ],
+  scopeMode: resolveStoreScopeMode,
+  resourceType: "STORE",
+});
 
-router.get("/", getAllStores);
+router.get("/", requireStoreListRead, getAllStores);
 router.get("/nearby", getNearbyStores);
-router.get("/:id", getStoreById);
+router.get("/:id", requireStoreDetailRead, getStoreById);
 router.post("/:storeId/check-stock", checkStoreStock);
 
 // Admin only routes — resolveAccessContext must come after restrictTo so that

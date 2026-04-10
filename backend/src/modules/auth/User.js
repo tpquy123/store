@@ -97,6 +97,8 @@ const userSchema = new mongoose.Schema(
         "BRANCH_ADMIN",
       ],
       default: "USER",
+      comment:
+        "Deprecated legacy display field. Authorization resolves from UserRoleAssignment records.",
     },
 
     roles: [
@@ -111,6 +113,8 @@ const userSchema = new mongoose.Schema(
         type: String,
         lowercase: true,
         trim: true,
+        comment:
+          "Deprecated legacy read-model field. Business logic must resolve direct grants from UserPermissionGrant.",
       },
     ],
 
@@ -158,6 +162,8 @@ const userSchema = new mongoose.Schema(
       enum: ["ROLE_FALLBACK", "EXPLICIT", "HYBRID"],
       default: "ROLE_FALLBACK",
       index: true,
+      comment:
+        "Deprecated legacy compatibility field. Runtime authorization no longer branches on permissionMode.",
     },
 
     preferences: {

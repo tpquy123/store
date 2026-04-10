@@ -7,6 +7,7 @@ import request from "supertest";
 import { MongoMemoryServer } from "mongodb-memory-server";
 
 import config from "../config/config.js";
+import authRoutes from "../modules/auth/authRoutes.js";
 import orderRoutes from "../modules/order/orderRoutes.js";
 import deviceRoutes from "../modules/device/deviceRoutes.js";
 import warrantyRoutes from "../modules/warranty/warrantyRoutes.js";
@@ -55,6 +56,7 @@ before(
 
     app = express();
     app.use(express.json());
+    app.use("/api/auth", authRoutes);
     app.use("/api/orders", orderRoutes);
     app.use("/api/devices", deviceRoutes);
     app.use("/api/warranty", warrantyRoutes);
@@ -189,4 +191,36 @@ test("customer can still read own order history endpoint", async () => {
   assert.equal(response.status, 200);
   assert.equal(response.body?.success, true);
   assert.ok(Array.isArray(response.body?.data?.orders));
+});
+
+test("POS staff can look up customers by phone for in-store order flow", async () => {
+  const token = createToken(fixture.explicitPosUser);
+
+  const response = await request(app)
+    .get("/api/auth/check-customer")
+    .query({ phoneNumber: fixture.customer.phoneNumber })
+    .set("Authorization", `Bearer ${token}`);
+
+  assert.equal(response.status, 200);
+  assert.equal(response.body?.success, true);
+  assert.equal(response.body?.exists, true);
+  assert.equal(response.body?.customer?.phoneNumber, fixture.customer.phoneNumber);
+});
+
+test("POS staff can quick-register a new customer for in-store order flow", async () => {
+  const token = createToken(fixture.explicitPosUser);
+  const phoneNumber = nextPhone();
+
+  const response = await request(app)
+    .post("/api/auth/quick-register")
+    .set("Authorization", `Bearer ${token}`)
+    .send({
+      fullName: "Walk-in Customer",
+      phoneNumber,
+    });
+
+  assert.equal(response.status, 201);
+  assert.equal(response.body?.success, true);
+  assert.equal(response.body?.customer?.phoneNumber, phoneNumber);
+  assert.match(String(response.body?.temporaryPassword || ""), /@/);
 });
