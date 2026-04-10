@@ -25,6 +25,97 @@ const resolveOrderWriteScopeMode = (req) => {
   return "branch";
 };
 
+const getPermissionSet = (req) =>
+  req?.authz?.permissions instanceof Set ? req.authz.permissions : new Set();
+
+const resolveOrderReadScopeMode = (req) => {
+  const permissionSet = getPermissionSet(req);
+  if (
+    req?.authz?.isGlobalAdmin &&
+    (permissionSet.has(AUTHZ_ACTIONS.ORDERS_READ) ||
+      permissionSet.has(AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH))
+  ) {
+    return "global";
+  }
+  if (
+    permissionSet.has(AUTHZ_ACTIONS.ORDERS_READ) ||
+    permissionSet.has(AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH)
+  ) {
+    return "branch";
+  }
+  if (permissionSet.has(AUTHZ_ACTIONS.ORDER_VIEW_ASSIGNED)) {
+    return "task";
+  }
+  return "self";
+};
+
+const resolveOrderCreateScopeMode = (req) => {
+  const permissionSet = getPermissionSet(req);
+  if (req?.authz?.isGlobalAdmin && permissionSet.has(AUTHZ_ACTIONS.ORDERS_WRITE)) {
+    return "global";
+  }
+  if (permissionSet.has(AUTHZ_ACTIONS.ORDERS_WRITE)) {
+    return "branch";
+  }
+  return "self";
+};
+
+const resolveOrderCancelScopeMode = (req) => {
+  const permissionSet = getPermissionSet(req);
+  if (
+    req?.authz?.isGlobalAdmin &&
+    (permissionSet.has(AUTHZ_ACTIONS.ORDERS_WRITE) ||
+      permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE))
+  ) {
+    return "global";
+  }
+  if (
+    permissionSet.has(AUTHZ_ACTIONS.ORDERS_WRITE) ||
+    permissionSet.has(AUTHZ_ACTIONS.ORDER_STATUS_MANAGE)
+  ) {
+    return "branch";
+  }
+  return "self";
+};
+
+const requireOrderManagementRead = authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.ORDERS_READ, AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH],
+  scopeMode: resolveOrderReadScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requireOrderRead = authorize(null, {
+  anyOf: [
+    AUTHZ_ACTIONS.ORDERS_READ,
+    AUTHZ_ACTIONS.ORDER_VIEW_SELF,
+    AUTHZ_ACTIONS.ORDER_VIEW_ASSIGNED,
+    AUTHZ_ACTIONS.POS_ORDER_READ_SELF,
+    AUTHZ_ACTIONS.POS_ORDER_READ_BRANCH,
+  ],
+  scopeMode: resolveOrderReadScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requireOrderCreate = authorize(null, {
+  anyOf: [AUTHZ_ACTIONS.ORDERS_WRITE, AUTHZ_ACTIONS.CART_MANAGE_SELF],
+  scopeMode: resolveOrderCreateScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
+const requireOrderCancel = authorize(null, {
+  anyOf: [
+    AUTHZ_ACTIONS.ORDERS_WRITE,
+    AUTHZ_ACTIONS.ORDER_STATUS_MANAGE,
+    AUTHZ_ACTIONS.ORDER_VIEW_SELF,
+  ],
+  scopeMode: resolveOrderCancelScopeMode,
+  requireActiveBranchFor: ["branch"],
+  resourceType: "ORDER",
+});
+
 const auditCreateOrder = orderAuditMiddleware({
   actionType: ORDER_AUDIT_ACTIONS.CREATE_ORDER,
   source: "ORDERS_API",
@@ -104,9 +195,9 @@ router.get(
   orderController.getOrderStats
 );
 
-router.get("/all", orderController.getAllOrders);
-router.get("/", orderController.getAllOrders);
-router.get("/my-orders", orderController.getAllOrders);
+router.get("/all", requireOrderManagementRead, orderController.getAllOrders);
+router.get("/", requireOrderManagementRead, orderController.getAllOrders);
+router.get("/my-orders", requireOrderRead, orderController.getAllOrders);
 router.get(
   "/:id/audit-logs",
   authorize(AUTHZ_ACTIONS.ORDER_AUDIT_READ, {
@@ -116,12 +207,12 @@ router.get(
   }),
   getOrderAuditLogs
 );
-router.get("/:id", orderController.getOrderById);
+router.get("/:id", requireOrderRead, orderController.getOrderById);
 
-router.post("/", auditCreateOrder, orderController.createOrder);
+router.post("/", requireOrderCreate, auditCreateOrder, orderController.createOrder);
 
-router.patch("/:id/cancel", auditCancelOrder, orderController.cancelOrder);
-router.post("/:id/cancel", auditCancelOrder, orderController.cancelOrder);
+router.patch("/:id/cancel", requireOrderCancel, auditCancelOrder, orderController.cancelOrder);
+router.post("/:id/cancel", requireOrderCancel, auditCancelOrder, orderController.cancelOrder);
 
 router.patch(
   "/:id/status",

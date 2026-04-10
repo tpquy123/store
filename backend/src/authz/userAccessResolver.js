@@ -62,6 +62,14 @@ const dedupeBranchAssignments = (assignments = []) => {
   return Array.from(byStore.values()).filter((item) => item.roles.length > 0);
 };
 
+const normalizePermissionMode = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (["ROLE_FALLBACK", "EXPLICIT", "HYBRID"].includes(normalized)) {
+    return normalized;
+  }
+  return "ROLE_FALLBACK";
+};
+
 export const deriveAuthzWriteFromLegacyInput = ({ role, storeLocation, assignedBy } = {}) => {
   const normalizedRole = String(role || "").trim().toUpperCase();
   const storeId = toStringId(storeLocation);
@@ -133,7 +141,7 @@ export const normalizeUserAccess = (user) => {
     defaultBranchId && allowedBranchIds.includes(defaultBranchId) ? defaultBranchId : "";
   const requiresBranchAssignment = branchAssignments.length > 0;
   const isGlobalAdmin = systemRoles.includes("GLOBAL_ADMIN") || role === "GLOBAL_ADMIN";
-  const permissionMode = "HYBRID";
+  const permissionMode = normalizePermissionMode(safeUser.permissionMode);
 
   return {
     userId: toStringId(safeUser._id),

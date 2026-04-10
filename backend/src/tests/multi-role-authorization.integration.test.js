@@ -62,6 +62,7 @@ test("getUserPermissions merges multiple role permissions with direct grants and
   const branch = await createStore({ code: "BRA", name: "Branch A" });
   const user = await User.create({
     role: "WAREHOUSE_STAFF",
+    permissionMode: "HYBRID",
     fullName: "Hybrid Staff",
     phoneNumber: nextPhone(),
     password: "Strong@1234",
@@ -121,6 +122,7 @@ test("getUserPermissions honors direct grants when the assigned role does not in
   const branch = await createStore({ code: "BRB", name: "Branch B" });
   const user = await User.create({
     role: "WAREHOUSE_STAFF",
+    permissionMode: "HYBRID",
     fullName: "Direct Grant User",
     phoneNumber: nextPhone(),
     password: "Strong@1234",
@@ -165,6 +167,67 @@ test("getUserPermissions honors direct grants when the assigned role does not in
 
   assert.ok(afterGrant.permissions.includes("users.manage.branch"));
   assert.ok(afterGrant.roleKeys.includes("WAREHOUSE_STAFF"));
+});
+
+test("getUserPermissions in EXPLICIT mode ignores role grants and only exposes direct permissions", async () => {
+  const branch = await createStore({ code: "BRC", name: "Branch C" });
+  const user = await User.create({
+    role: "POS_STAFF",
+    permissionMode: "EXPLICIT",
+    fullName: "Explicit POS User",
+    phoneNumber: nextPhone(),
+    password: "Strong@1234",
+    status: "ACTIVE",
+    storeLocation: String(branch._id),
+  });
+
+  await syncUserRoleAssignments({
+    user,
+    assignments: [
+      {
+        roleKey: "POS_STAFF",
+        scopeType: "BRANCH",
+        scopeRef: String(branch._id),
+      },
+    ],
+    primaryBranchId: String(branch._id),
+    reason: "test_explicit_pos_seed",
+  });
+
+  await applyUserPermissionAssignments({
+    targetUserId: user._id,
+    assignments: [
+      {
+        key: "pos.order.create",
+        scopeType: "BRANCH",
+        scopeId: String(branch._id),
+      },
+      {
+        key: "pos.order.cancel",
+        scopeType: "BRANCH",
+        scopeId: String(branch._id),
+      },
+      {
+        key: "pos.order.finalize",
+        scopeType: "BRANCH",
+        scopeId: String(branch._id),
+      },
+    ],
+    reason: "test_explicit_pos_grants",
+  });
+
+  const effective = await getUserPermissions(user._id, {
+    activeBranchId: String(branch._id),
+  });
+
+  assert.ok(effective.roleKeys.includes("POS_STAFF"));
+  assert.ok(effective.permissions.includes("pos.order.create"));
+  assert.ok(effective.permissions.includes("pos.order.cancel"));
+  assert.ok(effective.permissions.includes("pos.order.finalize"));
+  assert.equal(effective.permissions.includes("orders.read"), false);
+  assert.equal(effective.permissions.includes("orders.write"), false);
+  assert.equal(effective.permissions.includes("device.read"), false);
+  assert.equal(effective.permissions.includes("warranty.read"), false);
 });
 
 test("getUserPermissions resolves SELF-scoped customer role assignments without legacy role fallback", async () => {

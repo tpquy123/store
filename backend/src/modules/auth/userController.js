@@ -716,7 +716,7 @@ export const createEmployee = async (req, res) => {
       authzVersion: 2,
       permissionsVersion: 1,
       authorizationVersion: 1,
-      permissionMode: "HYBRID",
+      permissionMode: "ROLE_FALLBACK",
       storeLocation: effectiveStoreLocation,
     });
 

@@ -65,9 +65,13 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
   const snapshot = getAuthorizationSnapshot({ authz, authorization });
   const permissionSet = getPermissionSet(snapshot);
   const roleKeys = getRoleKeys({ user, authz, authorization });
-  const isGlobalAdmin = Boolean(snapshot?.isGlobalAdmin || permissionSet.has("*"));
-  const hasPermission = (key) => isGlobalAdmin || permissionSet.has(normalizePermissionKey(key));
-  const hasAnyPermission = (keys = []) => isGlobalAdmin || keys.some((key) => hasPermission(key));
+  const isGlobalAdmin = Boolean(
+    snapshot?.isGlobalAdmin || permissionSet.has("*"),
+  );
+  const hasPermission = (key) =>
+    isGlobalAdmin || permissionSet.has(normalizePermissionKey(key));
+  const hasAnyPermission = (keys = []) =>
+    isGlobalAdmin || keys.some((key) => hasPermission(key));
 
   const canManageUsers =
     hasPermission("*") ||
@@ -82,27 +86,58 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
       "store.manage",
     ])
   ) {
-    addItem(items, { path: "/admin", icon: LayoutDashboard, label: "Dashboard" });
+    addItem(items, {
+      path: "/admin",
+      icon: LayoutDashboard,
+      label: "Dashboard",
+    });
   }
 
   if (hasPermission("store.manage")) {
-    addItem(items, { path: "/admin/stores", icon: Store, label: "Quản lý cửa hàng" });
+    addItem(items, {
+      path: "/admin/stores",
+      icon: Store,
+      label: "Quản lý cửa hàng",
+    });
   }
 
   if (canManageUsers) {
-    addItem(items, { path: "/admin/employees", icon: Users, label: "Quản lý nhân viên" });
+    addItem(items, {
+      path: "/admin/employees",
+      icon: Users,
+      label: "Quản lý nhân viên",
+    });
   }
 
-  if (hasAnyPermission(["product.read", "product.create", "product.update", "product.delete"])) {
-    addItem(items, { path: "/warehouse/products", icon: Smartphone, label: "Sản phẩm" });
+  if (
+    hasAnyPermission([
+      "product.read",
+      "product.create",
+      "product.update",
+      "product.delete",
+    ])
+  ) {
+    addItem(items, {
+      path: "/warehouse/products",
+      icon: Smartphone,
+      label: "Sản phẩm",
+    });
   }
 
   if (hasPermission("brand.manage")) {
-    addItem(items, { path: "/admin/brands", icon: Tags, label: "Quản lý hãng" });
+    addItem(items, {
+      path: "/admin/brands",
+      icon: Tags,
+      label: "Quản lý hãng",
+    });
   }
 
   if (hasPermission("product_type.manage")) {
-    addItem(items, { path: "/admin/product-types", icon: Layers, label: "Loại sản phẩm" });
+    addItem(items, {
+      path: "/admin/product-types",
+      icon: Layers,
+      label: "Loại sản phẩm",
+    });
   }
 
   if (hasAnyPermission(["inventory.read", "warehouse.read"])) {
@@ -114,15 +149,27 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
   }
 
   if (hasAnyPermission(["inventory.write", "warehouse.write"])) {
-    addItem(items, { path: "/admin/stock-in", icon: PackagePlus, label: "Nhập kho" });
+    addItem(items, {
+      path: "/admin/stock-in",
+      icon: PackagePlus,
+      label: "Nhập kho",
+    });
   }
 
   if (hasAnyPermission(["device.read", "device.write"])) {
-    addItem(items, { path: "/admin/devices", icon: Smartphone, label: "Thiết bị" });
+    addItem(items, {
+      path: "/admin/devices",
+      icon: Smartphone,
+      label: "Thiết bị",
+    });
   }
 
   if (hasPermission("promotion.manage")) {
-    addItem(items, { path: "/admin/promotions", icon: Percent, label: "Khuyến mãi" });
+    addItem(items, {
+      path: "/admin/promotions",
+      icon: Percent,
+      label: "Khuyến mãi",
+    });
   }
 
   if (hasPermission("content.manage")) {
@@ -131,11 +178,19 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
       icon: Layout,
       label: "Giao diện trang chủ",
     });
-    addItem(items, { path: "/admin/short-videos", icon: Video, label: "Video ngắn" });
+    addItem(items, {
+      path: "/admin/short-videos",
+      icon: Video,
+      label: "Video ngắn",
+    });
   }
 
   if (hasPermission("analytics.read.global")) {
-    addItem(items, { path: "/admin/audit-logs", icon: ShieldCheck, label: "Audit logs" });
+    addItem(items, {
+      path: "/admin/audit-logs",
+      icon: ShieldCheck,
+      label: "Audit logs",
+    });
   }
 
   const canAccessWarehouseDashboard =
@@ -154,7 +209,12 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
 
   const canAccessWarehouseProducts =
     hasPermission("*") ||
-    hasAnyPermission(["product.create", "product.update", "product.delete", "product.read"]);
+    hasAnyPermission([
+      "product.create",
+      "product.update",
+      "product.delete",
+      "product.read",
+    ]);
 
   const canAccessWarehouseReceive =
     hasPermission("*") ||
@@ -181,7 +241,11 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
 
   // Section for warehouse-staff specific pages (not admin core)
   if (canAccessWarehouseDashboard) {
-    addItem(items, { path: "/warehouse-staff", icon: Package, label: "Dashboard kho" });
+    addItem(items, {
+      path: "/warehouse-staff",
+      icon: Package,
+      label: "Dashboard kho",
+    });
   }
 
   if (canAccessWarehouseReceive) {
@@ -233,7 +297,14 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
     });
   }
 
-  if (hasAnyPermission(["task.read", "task.update", "order.view.assigned", "order.status.manage.task"])) {
+  if (
+    hasAnyPermission([
+      "task.read",
+      "task.update",
+      "order.view.assigned",
+      "order.status.manage.task",
+    ])
+  ) {
     addItem(items, {
       path: "/shipper/dashboard",
       icon: Truck,
@@ -241,17 +312,46 @@ export const getDashboardNavigation = ({ user, authz, authorization }) => {
     });
   }
 
-  if (hasAnyPermission(["pos.order.create", "pos.order.read.self", "order.status.manage.pos"])) {
+  if (
+    hasAnyPermission([
+      "pos.order.create",
+      "pos.order.read.self",
+      "order.status.manage.pos",
+    ])
+  ) {
     addItem(items, { path: "/pos/dashboard", icon: Receipt, label: "POS" });
-    addItem(items, { path: "/pos/orders", icon: History, label: "Lịch sử POS" });
+    addItem(items, {
+      path: "/pos/orders",
+      icon: History,
+      label: "Lịch sử POS",
+    });
   }
 
-  if (hasAnyPermission(["pos.order.read.branch", "pos.payment.process", "pos.order.finalize", "pos.vat.issue"])) {
-    addItem(items, { path: "/CASHIER/dashboard", icon: TrendingUp, label: "Thủ ngân" });
-    addItem(items, { path: "/CASHIER/vat-invoices", icon: FileText, label: "Hóa đơn" });
+  if (
+    hasAnyPermission([
+      "pos.order.read.branch",
+      "pos.payment.process",
+      "pos.order.finalize",
+      "pos.vat.issue",
+    ])
+  ) {
+    addItem(items, {
+      path: "/CASHIER/dashboard",
+      icon: TrendingUp,
+      label: "Thu ngân",
+    });
+    addItem(items, {
+      path: "/CASHIER/vat-invoices",
+      icon: FileText,
+      label: "Hóa đơn",
+    });
   }
 
-  if (!roleKeys.length && items.length === 0 && hasPermission("cart.manage.self")) {
+  if (
+    !roleKeys.length &&
+    items.length === 0 &&
+    hasPermission("cart.manage.self")
+  ) {
     addItem(items, { path: "/profile", icon: Users, label: "Tài khoản" });
   }
 

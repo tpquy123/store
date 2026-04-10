@@ -20,6 +20,13 @@ import User from "../modules/auth/User.js";
 const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
 const normalizeScopeId = (value) => String(value || "").trim();
 const normalizePermissionKey = (value) => String(value || "").trim().toLowerCase();
+const normalizePermissionMode = (value) => {
+  const normalized = String(value || "").trim().toUpperCase();
+  if (["ROLE_FALLBACK", "EXPLICIT", "HYBRID"].includes(normalized)) {
+    return normalized;
+  }
+  return "ROLE_FALLBACK";
+};
 
 const toUniqueStrings = (items = []) =>
   Array.from(new Set(items.map((item) => String(item || "").trim()).filter(Boolean)));
@@ -99,7 +106,15 @@ export const resolveEffectiveAccessContext = async ({
       activeBranchId: effectiveActiveBranchId,
     }, { rolePermissionMap });
 
-    const permissionGrants = dedupePermissionGrants([...roleGrants, ...explicitGrants]);
+    const permissionMode = normalizePermissionMode(normalizedWithAssignments.permissionMode);
+    const permissionGrants =
+      permissionMode === "EXPLICIT"
+        ? dedupePermissionGrants(explicitGrants)
+        : permissionMode === "HYBRID"
+          ? dedupePermissionGrants([...roleGrants, ...explicitGrants])
+          : explicitGrants.length > 0
+            ? dedupePermissionGrants(explicitGrants)
+            : dedupePermissionGrants(roleGrants);
 
     const explicitBranchIds = collectBranchScopeIdsFromGrants(permissionGrants);
     const allowedBranchIds = toUniqueStrings([
@@ -111,7 +126,7 @@ export const resolveEffectiveAccessContext = async ({
       ...normalizedWithAssignments,
       activeBranchId: effectiveActiveBranchId,
       allowedBranchIds,
-      permissionMode: "HYBRID",
+      permissionMode,
       permissionGrants,
       rolePermissionMap,
       roleAssignments,

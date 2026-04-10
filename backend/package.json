@@ -11,6 +11,7 @@
     "uat:omnichannel": "node scripts/run_omnichannel_uat.js",
     "migrate:authz-v2": "node src/scripts/migrate-authz-v2.js",
     "migrate:authz-canonical": "node src/scripts/migrate-canonical-authorization.js",
+    "migrate:authz-explicit-hardening": "node src/scripts/migrate-authz-explicit-hardening.js",
     "seed:permission-catalog": "node src/scripts/seed-permission-catalog.js",
     "migrate:user-permissions:backfill": "node src/scripts/backfill-user-permissions.js",
     "seed:role-definitions": "node src/scripts/seed-role-definitions.js",
