@@ -2,6 +2,7 @@ import express from "express";
 import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
 import { authorize } from "../../middleware/authz/authorize.js";
+import { requireStepUp } from "../../middleware/authz/requireStepUp.js";
 import { withScopedRepository } from "../../middleware/authz/withScopedRepository.js";
 import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 import salesAnalyticsService from "./salesAnalyticsService.js";
@@ -99,7 +100,7 @@ router.get("/product/:productId", requireGlobalAnalytics, async (req, res) => {
   }
 });
 
-router.get("/sales-by-time", requireGlobalAnalytics, async (req, res) => {
+router.get("/sales-by-time", requireGlobalAnalytics, requireStepUp(AUTHZ_ACTIONS.ANALYTICS_READ_GLOBAL, { actionGroup: 'FINANCIAL_EXPORT' }), async (req, res) => {
   try {
     const { category, startDate, endDate, period = "daily" } = req.query;
 

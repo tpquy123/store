@@ -204,6 +204,14 @@ const PublicFooter = ({ footerCategoryLinks, setDesktopStoreMenuOpen }) => (
                   </Link>
                 </li>
                 <li>
+                  <Link
+                    to="/warranty-check"
+                    className="text-sm md:text-base text-gray-400 hover:text-white transition-colors duration-300"
+                  >
+                    Tra Cứu Bảo Hành
+                  </Link>
+                </li>
+                <li>
                   <a
                     href="https://www.apple.com/vn/shop/help"
                     target="_blank"

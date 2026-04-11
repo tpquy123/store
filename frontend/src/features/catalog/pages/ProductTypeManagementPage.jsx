@@ -32,6 +32,7 @@ const PRODUCT_TYPE_DELETE_BLOCKED_MESSAGE =
 
 const TRACKING_MODE_OPTIONS = ["NONE", "SERIALIZED"];
 const IDENTIFIER_POLICY_OPTIONS = [
+  "NONE",
   "IMEI",
   "SERIAL",
   "IMEI_OR_SERIAL",
@@ -53,8 +54,8 @@ const ProductTypeManagementPage = () => {
     icon: "",
     specFields: [],
     afterSalesDefaults: {
-      trackingMode: "NONE",
-      identifierPolicy: "IMEI_OR_SERIAL",
+      trackingMode: "",
+      identifierPolicy: "",
       warrantyMonths: 12,
       warrantyTerms: "",
     },
@@ -96,8 +97,8 @@ const ProductTypeManagementPage = () => {
         },
       ],
       afterSalesDefaults: {
-        trackingMode: "NONE",
-        identifierPolicy: "IMEI_OR_SERIAL",
+        trackingMode: "",
+        identifierPolicy: "",
         warrantyMonths: 12,
         warrantyTerms: "",
       },
@@ -116,9 +117,9 @@ const ProductTypeManagementPage = () => {
       icon: productType.icon || "",
       specFields: productType.specFields || [],
       afterSalesDefaults: {
-        trackingMode: productType.afterSalesDefaults?.trackingMode || "NONE",
+        trackingMode: productType.afterSalesDefaults?.trackingMode || "",
         identifierPolicy:
-          productType.afterSalesDefaults?.identifierPolicy || "IMEI_OR_SERIAL",
+          productType.afterSalesDefaults?.identifierPolicy || "",
         warrantyMonths: productType.afterSalesDefaults?.warrantyMonths ?? 12,
         warrantyTerms: productType.afterSalesDefaults?.warrantyTerms || "",
       },
@@ -154,6 +155,8 @@ const ProductTypeManagementPage = () => {
       ...formData,
       afterSalesDefaults: {
         ...formData.afterSalesDefaults,
+        trackingMode: formData.afterSalesDefaults?.trackingMode || null,
+        identifierPolicy: formData.afterSalesDefaults?.identifierPolicy || null,
         warrantyMonths: Number(formData.afterSalesDefaults?.warrantyMonths) || 0,
       },
       createdBy: user._id,
@@ -460,7 +463,7 @@ const ProductTypeManagementPage = () => {
               <div className="space-y-1.5">
                 <Label className="text-sm">Identifier policy</Label>
                 <Select
-                  value={formData.afterSalesDefaults?.identifierPolicy || "IMEI_OR_SERIAL"}
+                  value={formData.afterSalesDefaults?.identifierPolicy || "NONE"}
                   onValueChange={(value) =>
                     setFormData((prev) => ({
                       ...prev,

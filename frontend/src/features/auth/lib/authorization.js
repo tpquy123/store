@@ -142,4 +142,49 @@ export const resolveHomeRoute = ({ user, authz, authorization } = {}) => {
   return "/";
 };
 
+// ────────────────────────────────────────────────────────────────
+//  Step-up Authentication helpers
+// ────────────────────────────────────────────────────────────────
+
+/**
+ * SENSITIVE_ACTIONS — Danh sách các action cần step-up (mirror của backend).
+ * Cập nhật đây khi thêm action mới vào STEP_UP_REQUIRED_ACTIONS.
+ */
+export const SENSITIVE_ACTIONS = new Set([
+  "product.delete",
+  "analytics.read.global",
+  "analytics.manage.global",
+  "users.manage.global",
+  "promotion.manage",
+  "warehouse.write",
+  "order.status.manage",
+]);
+
+/**
+ * isActionSensitive — Kiểm tra xem action có cần step-up không (client-side check).
+ * Dùng để hiện badge 🔐 trên UI mà không cần API call.
+ *
+ * @param {string} action - Permission key
+ * @returns {boolean}
+ */
+export const isActionSensitive = (action) => {
+  const normalized = normalizePermissionKey(action);
+  return SENSITIVE_ACTIONS.has(normalized);
+};
+
+/**
+ * getGracePeriodExpiry — Lấy thời điểm hết hạn grace period cho một action group.
+ *
+ * @param {string} actionGroup - Group key (e.g. "PRODUCT_BULK_SENSITIVE")
+ * @param {object} stepUpState - stepUpState từ auth.store
+ * @returns {Date|null}
+ */
+export const getGracePeriodExpiry = (actionGroup, stepUpState) => {
+  if (!actionGroup || !stepUpState?.gracePeriods) return null;
+  const expiry = stepUpState.gracePeriods[actionGroup];
+  if (!expiry) return null;
+  const expiryDate = new Date(expiry);
+  return expiryDate > new Date() ? expiryDate : null;
+};
+
 export { normalizePermissionKey, normalizeRoleKey };

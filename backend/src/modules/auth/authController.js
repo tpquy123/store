@@ -335,7 +335,7 @@ export const login = async (req, res) => {
     // Tài khoản cũ có thể có format khác (ví dụ: 8 số, 11 số, không bắt đầu bằng 0...)
 
     // Find user - tìm bằng phoneNumber trực tiếp, không kiểm tra format
-    const user = await User.findOne({ phoneNumber }).select("+password");
+    const user = await User.findOne({ phoneNumber: String(phoneNumber).trim() }).select("+password");
     if (!user) {
       return res.status(401).json({
         success: false,

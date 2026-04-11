@@ -249,6 +249,27 @@ const userSchema = new mongoose.Schema(
       type: String,
       trim: true,
     },
+
+    // Cấu hình Step-up Authentication cho từng user
+    stepUpConfig: {
+      // Phương thức OTP ưa thích
+      preferredMethod: {
+        type: String,
+        enum: ["EMAIL", "SMS", "TOTP"],
+        default: "EMAIL",
+      },
+      // TOTP secret (Google Authenticator) — chỉ select khi cần thiết
+      totpSecret: {
+        type: String,
+        select: false,
+        default: null,
+      },
+      // Đã bật TOTP hay chưa
+      totpEnabled: {
+        type: Boolean,
+        default: false,
+      },
+    },
   },
   {
     timestamps: true,

@@ -35,6 +35,7 @@ const INSTALLMENT_BADGE_OPTIONS = [
 
 const TRACKING_MODE_OPTIONS = ["NONE", "SERIALIZED"];
 const IDENTIFIER_POLICY_OPTIONS = [
+  "NONE",
   "IMEI",
   "SERIAL",
   "IMEI_OR_SERIAL",
@@ -73,8 +74,8 @@ const UniversalProductForm = ({
     featuredImages: [""],
     videoUrl: "",
     afterSalesConfig: {
-      trackingMode: "NONE",
-      identifierPolicy: "IMEI_OR_SERIAL",
+      trackingMode: "",
+      identifierPolicy: "",
       warrantyMonths: "",
       warrantyTerms: "",
     },
@@ -200,8 +201,8 @@ const UniversalProductForm = ({
         featuredImages: [""],
         videoUrl: "",
         afterSalesConfig: {
-          trackingMode: "NONE",
-          identifierPolicy: "IMEI_OR_SERIAL",
+          trackingMode: "",
+          identifierPolicy: "",
           warrantyMonths: "",
           warrantyTerms: "",
         },
@@ -686,7 +687,7 @@ const UniversalProductForm = ({
                   <div className="space-y-2">
                     <Label>Identifier policy</Label>
                     <Select
-                      value={formData.afterSalesConfig?.identifierPolicy || "IMEI_OR_SERIAL"}
+                      value={formData.afterSalesConfig?.identifierPolicy || "NONE"}
                       onValueChange={(value) =>
                         setFormData({
                           ...formData,

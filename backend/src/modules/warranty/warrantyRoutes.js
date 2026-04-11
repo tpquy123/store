@@ -16,6 +16,7 @@ const publicLookupRateLimit = rateLimit({
 });
 
 router.get("/lookup", publicLookupRateLimit, controller.publicWarrantyLookup);
+router.get("/search", publicLookupRateLimit, controller.publicWarrantySearch);
 
 router.use(protect, resolveAccessContext);
 

@@ -11,7 +11,7 @@ import {
 } from "./roleAssignmentService.js";
 import { loadRolePermissionMap } from "./rolePermissionService.js";
 import { normalizeUserAccess } from "./userAccessResolver.js";
-import { loadActiveUserPermissionGrants } from "./userPermissionService.js";
+import { loadActiveUserPermissionGrants, loadActiveDenyGrants } from "./userPermissionService.js";
 
 const normalizeScopeType = (value) => String(value || "").trim().toUpperCase();
 const normalizeScopeId = (value) => String(value || "").trim();
@@ -79,13 +79,14 @@ export const resolvePermissionContext = async ({
   const cacheKey = `${normalizedUserId}:${permissionsVersion}:${effectiveActiveBranchId || "_"}:effective`;
 
   return getOrLoadEffectiveContext(cacheKey, async () => {
-    const [rolePermissionMap, roleAssignments, directPermissionGrants] = await Promise.all([
+    const [rolePermissionMap, roleAssignments, directPermissionGrants, denyGrants] = await Promise.all([
       loadRolePermissionMap(),
       loadActiveUserRoleAssignments({ userId: normalizedUserId }),
       loadActiveUserPermissionGrants({
         userId: normalizedUserId,
         permissionsVersion,
       }),
+      loadActiveDenyGrants({ userId: normalizedUserId }),
     ]);
 
     const roleGrants = buildRolePermissionGrants(
@@ -131,6 +132,8 @@ export const resolvePermissionContext = async ({
       rolePermissionMap,
       requiresBranchAssignment:
         Boolean(normalized.requiresBranchAssignment) || allowedBranchIds.length > 0,
+      // DENY grants riêng biệt — dùng bởi checkExplicitDeny() trong policyEngine
+      denyGrants,
     };
 
     authzSnapshot.permissions = buildPermissionSet(authzSnapshot);

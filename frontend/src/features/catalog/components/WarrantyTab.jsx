@@ -12,6 +12,7 @@ import {
 import {
   formatIdentifierPolicy,
   formatWarrantyDuration,
+  formatWarrantyProvider,
   isSerializedProduct,
   resolveAfterSalesConfig,
 } from "@/features/afterSales/utils/afterSales";
@@ -19,11 +20,12 @@ import {
 export const WarrantyTab = ({ product }) => {
   const config = resolveAfterSalesConfig(product);
   const serializedTracking = isSerializedProduct(product);
+  const warrantyProvider = formatWarrantyProvider(config.warrantyProvider);
   const warrantyDuration = formatWarrantyDuration(config.warrantyMonths);
   const identifierPolicy = formatIdentifierPolicy(config.identifierPolicy);
   const warrantyTerms =
     config.warrantyTerms ||
-    "Áp dụng cho lỗi phần cứng theo điều kiện bảo hành của cửa hàng và nhà sản xuất.";
+    "Ap dung theo dieu kien bao hanh cua cua hang va nha san xuat.";
 
   return (
     <div className="space-y-6">
@@ -31,10 +33,11 @@ export const WarrantyTab = ({ product }) => {
         <div className="flex items-center gap-3">
           <Gift className="h-8 w-8" />
           <div>
-            <h3 className="text-xl font-bold">Dịch vụ sau bán hàng</h3>
+            <h3 className="text-xl font-bold">Dich vu sau ban hang</h3>
             <p className="mt-1 text-sm text-orange-50">
-              Thiết bị được quản lý hậu mãi theo mã định danh riêng, tương tự quy
-              trình check coverage chuyên nghiệp.
+              {serializedTracking
+                ? "Thiet bi duoc quan ly bao hanh cua hang theo ma dinh danh rieng."
+                : "San pham hien thi thong tin bao hanh theo chinh sach dang ap dung."}
             </p>
           </div>
         </div>
@@ -46,7 +49,7 @@ export const WarrantyTab = ({ product }) => {
             <Shield className="h-6 w-6" />
           </div>
           <p className="text-lg font-bold text-blue-900">{warrantyDuration}</p>
-          <p className="mt-1 text-sm text-slate-700">Thời hạn bảo hành áp dụng cho sản phẩm này.</p>
+          <p className="mt-1 text-sm text-slate-700">{warrantyProvider}</p>
         </div>
 
         <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-5">
@@ -54,7 +57,11 @@ export const WarrantyTab = ({ product }) => {
             <Smartphone className="h-6 w-6" />
           </div>
           <p className="text-lg font-bold text-emerald-900">{identifierPolicy}</p>
-          <p className="mt-1 text-sm text-slate-700">Mã định danh dùng để kích hoạt và tra cứu bảo hành.</p>
+          <p className="mt-1 text-sm text-slate-700">
+            {serializedTracking
+              ? "Ma dinh danh dung de tao va tra cuu phieu bao hanh cua hang."
+              : "San pham nay khong bat buoc theo doi IMEI/Serial trong he thong."}
+          </p>
         </div>
 
         <div className="rounded-2xl border border-orange-200 bg-orange-50 p-5">
@@ -62,9 +69,13 @@ export const WarrantyTab = ({ product }) => {
             <RefreshCw className="h-6 w-6" />
           </div>
           <p className="text-lg font-bold text-orange-900">
-            {serializedTracking ? "Có theo dõi từng máy" : "Theo dõi theo sản phẩm"}
+            {serializedTracking ? "Co theo doi tung may" : "Khong tao phieu theo tung may"}
           </p>
-          <p className="mt-1 text-sm text-slate-700">Thiết bị sau bán được quản lý theo vòng đời phù hợp.</p>
+          <p className="mt-1 text-sm text-slate-700">
+            {serializedTracking
+              ? "Warranty duoc gan truc tiep vao IMEI/Serial va so dien thoai khach hang."
+              : "He thong khong tao phieu bao hanh cua hang cho nhom san pham nay."}
+          </p>
         </div>
       </div>
 
@@ -72,7 +83,7 @@ export const WarrantyTab = ({ product }) => {
         <div className="border-b bg-slate-50 px-6 py-4">
           <h3 className="flex items-center gap-2 text-lg font-bold text-slate-900">
             <ShieldCheck className="h-5 w-5 text-blue-600" />
-            Chính sách bảo hành
+            Chinh sach bao hanh
           </h3>
         </div>
         <div className="space-y-4 p-6">
@@ -81,9 +92,10 @@ export const WarrantyTab = ({ product }) => {
               <Clock className="h-4 w-4" />
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Thời hạn coverage</p>
+              <p className="font-semibold text-slate-900">Thoi han bao hanh</p>
               <p className="text-sm text-slate-600">
-                Bảo hành được tính từ ngày bàn giao thiết bị và kéo dài trong {warrantyDuration.toLowerCase()}.
+                Bao hanh duoc tinh tu ngay ban giao va keo dai trong{" "}
+                {warrantyDuration.toLowerCase()}.
               </p>
             </div>
           </div>
@@ -93,9 +105,10 @@ export const WarrantyTab = ({ product }) => {
               <Smartphone className="h-4 w-4" />
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Tra cứu theo mã định danh</p>
+              <p className="font-semibold text-slate-900">Tra cuu cong khai</p>
               <p className="text-sm text-slate-600">
-                Khách hàng có thể kiểm tra trạng thái bảo hành bằng {identifierPolicy.toLowerCase()} trên trang tra cứu công khai.
+                Khach hang co the kiem tra thong tin bang so dien thoai hoac{" "}
+                {identifierPolicy.toLowerCase()} khi san pham duoc cua hang tu bao hanh.
               </p>
             </div>
           </div>
@@ -105,7 +118,7 @@ export const WarrantyTab = ({ product }) => {
               <Shield className="h-4 w-4" />
             </div>
             <div>
-              <p className="font-semibold text-slate-900">Điều khoản áp dụng</p>
+              <p className="font-semibold text-slate-900">Dieu khoan ap dung</p>
               <p className="text-sm text-slate-600">{warrantyTerms}</p>
             </div>
           </div>
@@ -116,33 +129,33 @@ export const WarrantyTab = ({ product }) => {
         <div className="border-b bg-orange-50 px-6 py-4">
           <h3 className="flex items-center gap-2 text-lg font-bold text-orange-900">
             <RefreshCw className="h-5 w-5" />
-            Chính sách đổi trả & hỗ trợ
+            Doi tra va ho tro
           </h3>
         </div>
         <div className="grid gap-5 p-6 md:grid-cols-2">
           <div className="space-y-3">
             <div className="flex items-start gap-2 text-sm text-slate-700">
               <Check className="mt-0.5 h-4 w-4 text-emerald-600" />
-              <span>Hỗ trợ kiểm tra bảo hành nhanh theo mã định danh sau khi bán.</span>
+              <span>Warranty cua hang chi duoc tao khi san pham thuoc nhom STORE.</span>
             </div>
             <div className="flex items-start gap-2 text-sm text-slate-700">
               <Check className="mt-0.5 h-4 w-4 text-emerald-600" />
-              <span>Thiết bị serialized được lưu lịch sử trạng thái từ nhập kho đến sau bán.</span>
+              <span>IMEI/Serial duoc luu de truy vet chinh xac tung thiet bi can bao hanh.</span>
             </div>
             <div className="flex items-start gap-2 text-sm text-slate-700">
               <Check className="mt-0.5 h-4 w-4 text-emerald-600" />
-              <span>Đổi trả và xử lý sửa chữa được theo dõi xuyên suốt trên cùng hồ sơ thiết bị.</span>
+              <span>Khach hang co the tim lai phieu bao hanh bang so dien thoai mua hang.</span>
             </div>
           </div>
 
           <div className="space-y-3">
             <div className="flex items-start gap-2 text-sm text-slate-700">
               <Truck className="mt-0.5 h-4 w-4 text-blue-600" />
-              <span>Miễn phí giao hàng toàn quốc, kiểm tra máy trước khi nhận.</span>
+              <span>San pham moi duoc hien thi theo chinh sach bao hanh hang, khong tao phieu store warranty.</span>
             </div>
             <div className="flex items-start gap-2 text-sm text-slate-700">
               <Gift className="mt-0.5 h-4 w-4 text-orange-600" />
-              <span>Khuyến mãi và chính sách hậu mãi có thể thay đổi theo từng dòng sản phẩm.</span>
+              <span>Quy tac co the duoc mo rong cho dien thoai, laptop, tai nghe va cac nhom san pham khac.</span>
             </div>
           </div>
         </div>

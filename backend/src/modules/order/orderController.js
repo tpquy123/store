@@ -25,13 +25,16 @@ import {
   PAID_ORDER_SAFE_CANCEL_STATUSES,
 } from "./orderStateMachine.js";
 import {
-  activateWarrantyForOrder,
   releaseOrderDevices,
 } from "../device/deviceService.js";
 import {
   INVENTORY_STATES,
   SERVICE_STATES,
 } from "../device/afterSalesConfig.js";
+import {
+  activateWarrantyForOrder,
+  voidWarrantyForOrder,
+} from "../warranty/warrantyService.js";
 import {
   recalculateProductAvailability,
   resolveVariantPricingSnapshot,
@@ -2555,6 +2558,13 @@ export const updateOrderStatus = async (req, res) => {
     }
 
     if (targetStatus === "RETURNED") {
+      await voidWarrantyForOrder({
+        order,
+        actor: req.user,
+        session,
+        note: note || "Warranty voided because the order was returned",
+      });
+
       await releaseOrderDevices({
         order,
         actor: req.user,

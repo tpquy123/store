@@ -17,6 +17,7 @@ import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
 import { checkPermission } from "../../middleware/authz/checkPermission.js";
 import { AUTHZ_ACTIONS } from "../../authz/actions.js";
+import stepUpRoutes from "./stepUpRoutes.js";
 
 const router = express.Router();
 
@@ -58,5 +59,8 @@ router.post(
   requireCustomerQuickRegister,
   quickRegisterCustomer
 );
+
+// Step-up Authentication routes — yêu cầu đăng nhập
+router.use("/step-up", protect, stepUpRoutes);
 
 export default router;

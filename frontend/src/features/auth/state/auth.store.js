@@ -100,6 +100,18 @@ export const useAuthStore = create(
       simulatedBranchId: null,
       finishRehydration: () => set({ rehydrating: false }),
 
+      // Step-up Authentication state
+      stepUpState: {
+        pending: false,
+        sessionToken: null,
+        targetAction: null,
+        actionGroup: null,
+        maskedContact: null,
+        expiresAt: null,
+        stepUpToken: null,
+        gracePeriods: {}, // { actionGroup: expiresAt }
+      },
+
       login: async (credentials) => {
         set({ isLoading: true, error: null });
         try {
@@ -319,6 +331,109 @@ export const useAuthStore = create(
       },
 
       clearError: () => set({ error: null }),
+
+      // ─────────────────────────────────────────────
+      //  Step-up Authentication actions
+      // ─────────────────────────────────────────────
+
+      requestStepUp: async (action) => {
+        try {
+          const response = await authAPI.requestStepUp({ action });
+          const { sessionToken, expiresAt, delivery, maskedContact, actionGroup } = response.data.data;
+
+          set((state) => ({
+            stepUpState: {
+              ...state.stepUpState,
+              pending: true,
+              sessionToken,
+              targetAction: action,
+              actionGroup,
+              maskedContact,
+              expiresAt,
+            },
+          }));
+
+          return { success: true, sessionToken, expiresAt, maskedContact, delivery };
+        } catch (error) {
+          return {
+            success: false,
+            message: error.response?.data?.message || "Khong the gui ma OTP",
+          };
+        }
+      },
+
+      verifyStepUp: async (otp) => {
+        const { stepUpState } = get();
+        if (!stepUpState.sessionToken) {
+          return { success: false, message: "Khong co session step-up dang cho" };
+        }
+
+        try {
+          const response = await authAPI.verifyStepUp({
+            sessionToken: stepUpState.sessionToken,
+            otp,
+          });
+          const { stepUpToken, expiresAt, actionGroup, gracePeriodExpiresAt } = response.data.data;
+
+          set((state) => ({
+            stepUpState: {
+              ...state.stepUpState,
+              pending: false,
+              stepUpToken,
+              gracePeriods: gracePeriodExpiresAt && actionGroup
+                ? {
+                    ...state.stepUpState.gracePeriods,
+                    [actionGroup]: gracePeriodExpiresAt,
+                  }
+                : state.stepUpState.gracePeriods,
+            },
+          }));
+
+          return { success: true, stepUpToken };
+        } catch (error) {
+          return {
+            success: false,
+            message: error.response?.data?.message || "Ma OTP khong chinh xac",
+            attemptsLeft: error.response?.data?.data?.attemptsLeft,
+          };
+        }
+      },
+
+      clearStepUp: () => {
+        set((state) => ({
+          stepUpState: {
+            ...state.stepUpState,
+            pending: false,
+            sessionToken: null,
+            targetAction: null,
+            actionGroup: null,
+            maskedContact: null,
+            expiresAt: null,
+            stepUpToken: null,
+          },
+        }));
+      },
+
+      setGracePeriod: (actionGroup, expiresAt) => {
+        if (!actionGroup) return;
+        set((state) => ({
+          stepUpState: {
+            ...state.stepUpState,
+            gracePeriods: {
+              ...state.stepUpState.gracePeriods,
+              [actionGroup]: expiresAt,
+            },
+          },
+        }));
+      },
+
+      isInGracePeriod: (actionGroup) => {
+        if (!actionGroup) return false;
+        const gracePeriods = get().stepUpState.gracePeriods;
+        const expiry = gracePeriods[actionGroup];
+        if (!expiry) return false;
+        return new Date(expiry) > new Date();
+      },
     }),
     {
       name: "auth-storage",

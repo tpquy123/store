@@ -7,6 +7,7 @@ import mongoose from "mongoose";
 import {
   IDENTIFIER_POLICIES,
   TRACKING_MODES,
+  WARRANTY_PROVIDERS,
 } from "../device/afterSalesConfig.js";
 
 const specFieldSchema = new mongoose.Schema({
@@ -61,6 +62,10 @@ const productTypeSchema = new mongoose.Schema(
       default: "",
     },
     afterSalesDefaults: {
+      warrantyProvider: {
+        type: String,
+        enum: Object.values(WARRANTY_PROVIDERS),
+      },
       trackingMode: {
         type: String,
         enum: Object.values(TRACKING_MODES),

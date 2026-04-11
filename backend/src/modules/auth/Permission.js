@@ -49,6 +49,19 @@ const permissionSchema = new mongoose.Schema(
       default: false,
       index: true,
     },
+    // Yêu cầu step-up authentication (OTP) trước khi thực hiện
+    requiresStepUp: {
+      type: Boolean,
+      default: false,
+      index: true,
+    },
+    // Nhóm action để dùng chung grace period (e.g. "product_bulk_sensitive")
+    stepUpGroup: {
+      type: String,
+      trim: true,
+      uppercase: true,
+      default: "",
+    },
     isActive: {
       type: Boolean,
       default: true,

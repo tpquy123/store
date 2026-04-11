@@ -1,4 +1,5 @@
 import axios from "axios";
+import { setupStepUpInterceptor } from "./stepUpInterceptor.js";
 
 const BASE_URL = import.meta.env.VITE_API_URL || "/api";
 
@@ -54,6 +55,9 @@ export const api = axios.create({
   headers: { "Content-Type": "application/json" },
   withCredentials: true,
 });
+
+// Đăng ký step-up interceptor ngay sau khi tạo instance
+setupStepUpInterceptor(api);
 
 api.interceptors.request.use(
   (config) => {

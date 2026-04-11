@@ -8,8 +8,11 @@ import {
   buildError,
   createLifecycleEvent,
   getActorName,
-  getPublicWarrantyLookup,
 } from "../device/deviceService.js";
+import {
+  getPublicWarrantyLookup,
+  searchWarrantyRecords,
+} from "./warrantyService.js";
 
 const parsePagination = (query = {}) => {
   const page = Math.max(1, Number(query.page) || 1);
@@ -26,6 +29,12 @@ export const listWarranties = async (req, res) => {
     }
     if (req.query.variantSku) {
       filter.variantSku = String(req.query.variantSku).trim();
+    }
+    if (req.query.customerPhone) {
+      filter.customerPhone = String(req.query.customerPhone).trim();
+    }
+    if (req.query.warrantyType) {
+      filter.warrantyType = String(req.query.warrantyType).trim().toUpperCase();
     }
 
     const [records, total] = await Promise.all([
@@ -151,9 +160,30 @@ export const publicWarrantyLookup = async (req, res) => {
   }
 };
 
+export const publicWarrantySearch = async (req, res) => {
+  try {
+    const phone = String(req.query.phone || "").trim();
+    const imeiOrSerial = String(
+      req.query.imeiOrSerial || req.query.identifier || ""
+    ).trim();
+    const result = await searchWarrantyRecords({ phone, imeiOrSerial });
+    res.json({
+      success: true,
+      data: result,
+    });
+  } catch (error) {
+    res.status(error.httpStatus || 500).json({
+      success: false,
+      code: error.code,
+      message: error.message || "Failed to search warranty records",
+    });
+  }
+};
+
 export default {
   getWarrantyById,
   listWarranties,
   publicWarrantyLookup,
+  publicWarrantySearch,
   updateWarrantyStatus,
 };

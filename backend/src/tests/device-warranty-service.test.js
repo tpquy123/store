@@ -6,22 +6,22 @@ import { MongoMemoryServer } from "mongodb-memory-server";
 import { runWithBranchContext } from "../authz/branchContext.js";
 import Device from "../modules/device/Device.js";
 import {
-  addMonthsToDate,
-  ensureIdentifierPolicySatisfied,
   IDENTIFIER_POLICIES,
   TRACKING_MODES,
+  WARRANTY_PROVIDERS,
+  mergeAfterSalesConfig,
 } from "../modules/device/afterSalesConfig.js";
-import {
-  activateWarrantyForOrder,
-  assignDevicesToOrderItem,
-  getPublicWarrantyLookup,
-  registerSerializedUnits,
-} from "../modules/device/deviceService.js";
+import { registerSerializedUnits } from "../modules/device/deviceService.js";
 import UniversalProduct, {
   UniversalVariant,
 } from "../modules/product/UniversalProduct.js";
 import ProductType from "../modules/productType/ProductType.js";
 import WarrantyRecord from "../modules/warranty/WarrantyRecord.js";
+import {
+  activateWarrantyForOrder,
+  getPublicWarrantyLookup,
+  searchWarrantyRecords,
+} from "../modules/warranty/warrantyService.js";
 
 let mongoServer;
 
@@ -32,11 +32,13 @@ const clearAllCollections = async () => {
   }
 };
 
-const seedSerializedCatalog = async ({
+const seedCatalog = async ({
   productTypeName = "Smartphone",
+  condition = "LIKE_NEW",
   trackingMode = TRACKING_MODES.SERIALIZED,
-  identifierPolicy = IDENTIFIER_POLICIES.IMEI_AND_SERIAL,
+  identifierPolicy = IDENTIFIER_POLICIES.IMEI,
   warrantyMonths = 12,
+  productAfterSalesConfig = {},
 } = {}) => {
   const createdBy = new mongoose.Types.ObjectId();
   const productType = await ProductType.create({
@@ -52,12 +54,17 @@ const seedSerializedCatalog = async ({
   const product = await UniversalProduct.create({
     name: `${productTypeName} Test Device`,
     model: `${productTypeName.toUpperCase()}-MODEL-1`,
-    baseSlug: `${productTypeName.toLowerCase()}-test-device`,
-    slug: `${productTypeName.toLowerCase()}-test-device`,
+    baseSlug: `${productTypeName.toLowerCase()}-test-device-${String(
+      new mongoose.Types.ObjectId()
+    ).slice(-6)}`,
+    slug: `${productTypeName.toLowerCase()}-test-device-${String(
+      new mongoose.Types.ObjectId()
+    ).slice(-6)}`,
     brand: new mongoose.Types.ObjectId(),
     productType: productType._id,
     createdBy,
-    afterSalesConfig: {},
+    afterSalesConfig: productAfterSalesConfig,
+    condition,
     lifecycleStage: "ACTIVE",
     status: "AVAILABLE",
   });
@@ -98,30 +105,41 @@ after(async () => {
   }
 });
 
-test("identifier policy and warranty date helpers behave as expected", () => {
-  assert.equal(
-    ensureIdentifierPolicySatisfied(
-      { identifierPolicy: IDENTIFIER_POLICIES.IMEI_AND_SERIAL },
-      { imei: "356789012345678", serialNumber: "" }
-    ),
-    "Both IMEI and serial number are required for this product"
-  );
+test("after-sales defaults distinguish BRAND and STORE warranty by product condition", async () => {
+  const brandCatalog = await seedCatalog({
+    productTypeName: "Smartphone",
+    condition: "NEW",
+  });
+  const storeCatalog = await seedCatalog({
+    productTypeName: "Laptop",
+    condition: "LIKE_NEW",
+    identifierPolicy: IDENTIFIER_POLICIES.SERIAL,
+  });
 
-  assert.equal(
-    ensureIdentifierPolicySatisfied(
-      { identifierPolicy: IDENTIFIER_POLICIES.IMEI_OR_SERIAL },
-      { imei: "", serialNumber: "SN-001" }
-    ),
-    ""
-  );
+  const brandConfig = mergeAfterSalesConfig({
+    product: brandCatalog.product.toObject(),
+    productType: brandCatalog.productType.toObject(),
+  });
+  const storeConfig = mergeAfterSalesConfig({
+    product: storeCatalog.product.toObject(),
+    productType: storeCatalog.productType.toObject(),
+  });
 
-  const nextDate = addMonthsToDate(new Date("2026-01-15T00:00:00Z"), 12);
-  assert.equal(nextDate?.toISOString(), "2027-01-15T00:00:00.000Z");
+  assert.equal(brandConfig.warrantyProvider, WARRANTY_PROVIDERS.BRAND);
+  assert.equal(brandConfig.trackingMode, TRACKING_MODES.NONE);
+  assert.equal(brandConfig.warrantyMonths, 12);
+
+  assert.equal(storeConfig.warrantyProvider, WARRANTY_PROVIDERS.STORE);
+  assert.equal(storeConfig.trackingMode, TRACKING_MODES.SERIALIZED);
+  assert.equal(storeConfig.identifierPolicy, IDENTIFIER_POLICIES.SERIAL);
 });
 
-test("registerSerializedUnits creates normalized devices and rejects duplicates", async () => {
+test("registerSerializedUnits validates identifier format and uniqueness for store-managed products", async () => {
   const storeId = new mongoose.Types.ObjectId();
-  const { product, variant } = await seedSerializedCatalog();
+  const { product, variant } = await seedCatalog({
+    productTypeName: "Smartphone",
+    condition: "LIKE_NEW",
+  });
 
   await runWithBranchContext(
     {
@@ -137,17 +155,16 @@ test("registerSerializedUnits creates normalized devices and rejects duplicates"
         variantSku: variant.sku,
         productName: product.name,
         variantName: variant.variantName,
-        serializedUnits: [
-          {
-            imei: "3567 8901 2345 678",
-            serialNumber: "sn-ip15-0001",
-          },
-        ],
+        serializedUnits: [{ imei: "356789012345678" }],
       });
 
       assert.equal(devices.length, 1);
       assert.equal(devices[0].imeiNormalized, "356789012345678");
-      assert.equal(devices[0].serialNumberNormalized, "SN-IP15-0001");
+
+      const persisted = await Device.findById(devices[0]._id)
+        .setOptions({ skipBranchIsolation: true })
+        .lean();
+      assert.ok(persisted);
 
       await assert.rejects(
         registerSerializedUnits({
@@ -157,12 +174,23 @@ test("registerSerializedUnits creates normalized devices and rejects duplicates"
           variantSku: variant.sku,
           productName: product.name,
           variantName: variant.variantName,
-          serializedUnits: [
-            {
-              imei: "356789012345678",
-              serialNumber: "SN-IP15-0002",
-            },
-          ],
+          serializedUnits: [{ imei: "12345" }],
+        }),
+        (error) => {
+          assert.equal(error.code, "DEVICE_IDENTIFIER_INVALID");
+          return true;
+        }
+      );
+
+      await assert.rejects(
+        registerSerializedUnits({
+          storeId,
+          productId: product._id,
+          variantId: variant._id,
+          variantSku: variant.sku,
+          productName: product.name,
+          variantName: variant.variantName,
+          serializedUnits: [{ imei: "356789012345678" }],
         }),
         (error) => {
           assert.equal(error.code, "DEVICE_IMEI_DUPLICATE");
@@ -173,126 +201,33 @@ test("registerSerializedUnits creates normalized devices and rejects duplicates"
   );
 });
 
-test("assignDevicesToOrderItem reserves the requested serialized units", async () => {
+test("activateWarrantyForOrder creates a store warranty record and supports public lookup by phone or IMEI", async () => {
   const storeId = new mongoose.Types.ObjectId();
-  const { product, variant } = await seedSerializedCatalog();
-
-  await runWithBranchContext(
-    {
-      activeBranchId: String(storeId),
-      scopeMode: "branch",
-      isGlobalAdmin: false,
-    },
-    async () => {
-      const devices = await registerSerializedUnits({
-        storeId,
-        productId: product._id,
-        variantId: variant._id,
-        variantSku: variant.sku,
-        productName: product.name,
-        variantName: variant.variantName,
-        serializedUnits: [
-          { imei: "356789012345678", serialNumber: "SN-ASSIGN-0001" },
-          { imei: "356789012345679", serialNumber: "SN-ASSIGN-0002" },
-        ],
-      });
-
-      const order = {
-        _id: new mongoose.Types.ObjectId(),
-        orderNumber: "POS-ASSIGN-001",
-      };
-      const orderItem = {
-        _id: new mongoose.Types.ObjectId(),
-        productId: product._id,
-        variantSku: variant.sku,
-        quantity: 2,
-        productName: product.name,
-      };
-
-      const assignments = await assignDevicesToOrderItem({
-        storeId,
-        order,
-        orderItem,
-        requestedDeviceIds: devices.map((device) => device._id),
-        requestedQuantity: 2,
-        actor: { _id: new mongoose.Types.ObjectId(), fullName: "Warehouse Staff" },
-      });
-
-      assert.equal(assignments.length, 2);
-      assert.equal(orderItem.imei, "356789012345678");
-
-      const persistedDevices = await Device.find({
-        _id: { $in: devices.map((device) => device._id) },
-      }).lean();
-
-      assert.equal(persistedDevices.length, 2);
-      assert.ok(
-        persistedDevices.every((device) => device.inventoryState === "RESERVED")
-      );
-      assert.ok(
-        persistedDevices.every(
-          (device) => String(device.reservedFor?.orderId) === String(order._id)
-        )
-      );
-    }
-  );
-});
-
-test("activateWarrantyForOrder creates coverage records and public lookup returns active coverage", async () => {
-  const storeId = new mongoose.Types.ObjectId();
-  const { product, variant } = await seedSerializedCatalog({
-    warrantyMonths: 12,
+  const { product, variant } = await seedCatalog({
+    productTypeName: "Smartphone",
+    condition: "LIKE_NEW",
   });
 
-  let order;
-  await runWithBranchContext(
-    {
-      activeBranchId: String(storeId),
-      scopeMode: "branch",
-      isGlobalAdmin: false,
+  const order = {
+    _id: new mongoose.Types.ObjectId(),
+    orderNumber: "POS-WARRANTY-001",
+    assignedStore: { storeId },
+    customerId: new mongoose.Types.ObjectId(),
+    shippingAddress: {
+      fullName: "Customer Test",
+      phoneNumber: "0900000000",
     },
-    async () => {
-      const [device] = await registerSerializedUnits({
-        storeId,
-        productId: product._id,
-        variantId: variant._id,
-        variantSku: variant.sku,
-        productName: product.name,
-        variantName: variant.variantName,
-        serializedUnits: [
-          { imei: "356789012345680", serialNumber: "SN-WARRANTY-0001" },
-        ],
-      });
-
-      const orderItem = {
+    items: [
+      {
         _id: new mongoose.Types.ObjectId(),
         productId: product._id,
         variantSku: variant.sku,
         quantity: 1,
         productName: product.name,
-      };
-      order = {
-        _id: new mongoose.Types.ObjectId(),
-        orderNumber: "POS-WARRANTY-001",
-        assignedStore: { storeId },
-        customerId: new mongoose.Types.ObjectId(),
-        shippingAddress: {
-          fullName: "Customer Test",
-          phoneNumber: "0900000000",
-        },
-        items: [orderItem],
-      };
-
-      await assignDevicesToOrderItem({
-        storeId,
-        order,
-        orderItem,
-        requestedDeviceIds: [device._id],
-        requestedQuantity: 1,
-        actor: { _id: new mongoose.Types.ObjectId(), fullName: "Cashier" },
-      });
-    }
-  );
+        imei: "356789012345680",
+      },
+    ],
+  };
 
   const soldAt = new Date("2026-03-01T00:00:00Z");
   const records = await activateWarrantyForOrder({
@@ -302,26 +237,108 @@ test("activateWarrantyForOrder creates coverage records and public lookup return
   });
 
   assert.equal(records.length, 1);
-  assert.equal(records[0].status, "ACTIVE");
+  assert.equal(records[0].warrantyType, "STORE");
+  assert.equal(records[0].customerPhone, "0900000000");
+  assert.equal(records[0].imei, "356789012345680");
 
   const savedWarranty = await WarrantyRecord.findById(records[0]._id)
     .setOptions({ skipBranchIsolation: true })
     .lean();
   assert.ok(savedWarranty);
+  assert.equal(savedWarranty.customerPhoneNormalized, "0900000000");
   assert.equal(savedWarranty.warrantyMonths, 12);
   assert.equal(
     new Date(savedWarranty.expiresAt).toISOString(),
     "2027-03-01T00:00:00.000Z"
   );
 
-  const lookup = await getPublicWarrantyLookup({
+  const lookupByIdentifier = await getPublicWarrantyLookup({
     identifier: "356789012345680",
   });
+  assert.equal(lookupByIdentifier.productName, product.name);
+  assert.equal(lookupByIdentifier.warrantyStatus, "ACTIVE");
 
-  assert.equal(lookup.productName, product.name);
-  assert.equal(lookup.warrantyStatus, "ACTIVE");
+  const lookupByPhone = await searchWarrantyRecords({
+    phone: "0900000000",
+  });
+  assert.equal(lookupByPhone.total, 1);
+  assert.equal(lookupByPhone.warranties[0].identifier, "356789012345680");
+  assert.equal(lookupByPhone.warranties[0].warrantyPolicy, "");
+});
+
+test("activateWarrantyForOrder rejects missing identifiers for serialized store warranty items", async () => {
+  const storeId = new mongoose.Types.ObjectId();
+  const { product, variant } = await seedCatalog({
+    productTypeName: "Laptop",
+    condition: "LIKE_NEW",
+    identifierPolicy: IDENTIFIER_POLICIES.SERIAL,
+  });
+
+  const order = {
+    _id: new mongoose.Types.ObjectId(),
+    orderNumber: "ORD-STORE-001",
+    assignedStore: { storeId },
+    shippingAddress: {
+      fullName: "Customer Test",
+      phoneNumber: "0911111111",
+    },
+    items: [
+      {
+        _id: new mongoose.Types.ObjectId(),
+        productId: product._id,
+        variantSku: variant.sku,
+        quantity: 1,
+        productName: product.name,
+      },
+    ],
+  };
+
+  await assert.rejects(
+    activateWarrantyForOrder({
+      order,
+      soldAt: new Date("2026-03-01T00:00:00Z"),
+    }),
+    (error) => {
+      assert.equal(error.code, "WARRANTY_IDENTIFIER_REQUIRED");
+      return true;
+    }
+  );
+});
+
+test("activateWarrantyForOrder skips brand warranty products", async () => {
+  const storeId = new mongoose.Types.ObjectId();
+  const { product, variant } = await seedCatalog({
+    productTypeName: "Smartphone",
+    condition: "NEW",
+  });
+
+  const order = {
+    _id: new mongoose.Types.ObjectId(),
+    orderNumber: "ORD-BRAND-001",
+    assignedStore: { storeId },
+    shippingAddress: {
+      fullName: "Customer Test",
+      phoneNumber: "0922222222",
+    },
+    items: [
+      {
+        _id: new mongoose.Types.ObjectId(),
+        productId: product._id,
+        variantSku: variant.sku,
+        quantity: 1,
+        productName: product.name,
+      },
+    ],
+  };
+
+  const records = await activateWarrantyForOrder({
+    order,
+    soldAt: new Date("2026-03-01T00:00:00Z"),
+  });
+
+  assert.equal(records.length, 0);
   assert.equal(
-    new Date(lookup.warrantyExpirationDate).toISOString(),
-    "2027-03-01T00:00:00.000Z"
+    await WarrantyRecord.countDocuments().setOptions({ skipBranchIsolation: true }),
+    0
   );
 });

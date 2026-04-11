@@ -465,8 +465,45 @@ export const collectBranchScopeIdsFromGrants = (grants = []) => {
   );
 };
 
+/**
+ * loadActiveDenyGrants — Load riêng DENY grants để kiểm tra explicit deny.
+ * Tách khỏi loadActiveUserPermissionGrants để không ảnh hưởng cache ALLOW grants.
+ *
+ * @param {{ userId: string }} options
+ * @returns {Promise<Array>} Mảng DENY grant objects
+ */
+export const loadActiveDenyGrants = async ({ userId } = {}) => {
+  const normalizedUserId = String(userId || "").trim();
+  if (!normalizedUserId || !mongoose.Types.ObjectId.isValid(normalizedUserId)) {
+    return [];
+  }
+
+  const rows = await UserPermissionGrant.find({
+    userId: normalizedUserId,
+    effect: "DENY",
+    status: "ACTIVE",
+    $or: [{ expiresAt: null }, { expiresAt: { $gt: new Date() } }],
+  })
+    .select("permissionKey scopeType scopeRef deniedReason conditions assignedBy assignedAt expiresAt")
+    .lean();
+
+  return rows.map((row) => ({
+    permissionKey: normalizePermissionKey(row.permissionKey),
+    key: normalizePermissionKey(row.permissionKey),
+    scopeType: normalizeScopeType(row.scopeType),
+    scopeRef: normalizeScopeId(row.scopeRef),
+    scopeId: normalizeScopeId(row.scopeRef),
+    deniedReason: row.deniedReason || "",
+    conditions: Array.isArray(row.conditions) ? row.conditions : [],
+    assignedBy: row.assignedBy ? String(row.assignedBy) : "",
+    assignedAt: row.assignedAt || null,
+    effect: "DENY",
+  }));
+};
+
 export default {
   loadActiveUserPermissionGrants,
+  loadActiveDenyGrants,
   applyUserPermissionAssignments,
   normalizeRequestedPermissionAssignments,
   validateGrantAntiEscalation,

@@ -1,9 +1,10 @@
 import { ROLE_PERMISSIONS } from "./actions.js";
 
-const DENY = (code, message) => ({
+const DENY = (code, message, extra = {}) => ({
   allowed: false,
   code,
   message,
+  ...extra,
 });
 
 const ALLOW = () => ({ allowed: true, code: "AUTHZ_ALLOWED" });
@@ -316,6 +317,57 @@ export const buildPermissionSet = (authz) => {
   return permissions;
 };
 
+/**
+ * checkExplicitDeny — Kiểm tra xem user có DENY grant nào có hiệu lực không.
+ * DENY luôn ưu tiên hơn ALLOW (Explicit DENY override).
+ * GLOBAL_ADMIN luôn bypass DENY check.
+ *
+ * @param {object} authz - Authorization context
+ * @param {string} action - Permission key cần kiểm tra
+ * @param {object} [options] - mode, resource
+ * @returns {{ isDenied: boolean, reason: string }} 
+ */
+export const checkExplicitDeny = (authz, action, { mode = "branch", resource = null } = {}) => {
+  // GLOBAL_ADMIN không bị DENY bởi bất kỳ grant nào
+  const isGlobalAdmin = Boolean(authz?.isGlobalAdmin || authz?.systemRoles?.includes("GLOBAL_ADMIN"));
+  if (isGlobalAdmin) return { isDenied: false, reason: "" };
+
+  const denyGrants = Array.isArray(authz?.denyGrants) ? authz.denyGrants : [];
+  if (!denyGrants.length) return { isDenied: false, reason: "" };
+
+  const normalizedAction = normalizePermissionKey(action);
+  const activeBranchId = normalizeScopeId(authz?.activeBranchId);
+  const userId = normalizeScopeId(authz?.userId);
+  const resourceBranchId = normalizeScopeId(resource?.branchId);
+  const targetBranchId = resourceBranchId || activeBranchId;
+
+  for (const grant of denyGrants) {
+    const grantKey = normalizePermissionKey(grant?.permissionKey || grant?.key);
+    if (grantKey !== normalizedAction) continue;
+
+    const scopeType = normalizeScopeType(grant?.scopeType);
+    const scopeRef = normalizeScopeId(grant?.scopeRef || grant?.scopeId);
+
+    if (scopeType === "GLOBAL") {
+      return { isDenied: true, reason: grant.deniedReason || "Explicit DENY grant (global scope)" };
+    }
+
+    if (scopeType === "BRANCH") {
+      if (!scopeRef || scopeRef === targetBranchId) {
+        return { isDenied: true, reason: grant.deniedReason || "Explicit DENY grant (branch scope)" };
+      }
+    }
+
+    if (scopeType === "SELF") {
+      if (!scopeRef || scopeRef === userId) {
+        return { isDenied: true, reason: grant.deniedReason || "Explicit DENY grant (self scope)" };
+      }
+    }
+  }
+
+  return { isDenied: false, reason: "" };
+};
+
 export const hasPermission = (authz, action, { mode = "branch", resource = null } = {}) => {
   if (!action) return false;
   const normalizedAction = normalizePermissionKey(action);
@@ -419,6 +471,15 @@ export const evaluatePolicy = ({
 
   if (!action) {
     return DENY("AUTHZ_ACTION_MISSING", "Action is required");
+  }
+
+  // [Explicit DENY check] DENY grants luôn ưu tiên — kiểm tra trước khi check ALLOW
+  const denyCheck = checkExplicitDeny(authz, action, { mode, resource });
+  if (denyCheck.isDenied) {
+    return DENY("AUTHZ_EXPLICIT_DENY", "You do not have permission to perform this action", {
+      deniedAction: action,
+      deniedReason: denyCheck.reason,
+    });
   }
 
   if (!hasPermission(authz, action, { mode, resource })) {

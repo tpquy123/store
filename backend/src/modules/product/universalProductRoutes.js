@@ -8,6 +8,7 @@ import controller from "./universalProductController.js";
 import { protect } from "../../middleware/authMiddleware.js";
 import { resolveAccessContext } from "../../middleware/authz/resolveAccessContext.js";
 import { authorize } from "../../middleware/authz/authorize.js";
+import { requireStepUp } from "../../middleware/authz/requireStepUp.js";
 import { AUTHZ_ACTIONS } from "../../authz/actions.js";
 
 const router = express.Router();
@@ -63,6 +64,7 @@ router.delete(
     requireActiveBranchFor: ["branch"],
     resourceType: "PRODUCT",
   }),
+  requireStepUp(AUTHZ_ACTIONS.PRODUCT_DELETE, { actionGroup: 'PRODUCT_BULK_SENSITIVE' }),
   controller.deleteProduct
 );
 

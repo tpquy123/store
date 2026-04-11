@@ -116,7 +116,6 @@ const deviceSchema = new mongoose.Schema(
     imeiNormalized: {
       type: String,
       trim: true,
-      sparse: true,
     },
     serialNumber: {
       type: String,
@@ -126,7 +125,6 @@ const deviceSchema = new mongoose.Schema(
     serialNumberNormalized: {
       type: String,
       trim: true,
-      sparse: true,
     },
     lookupKeys: [{ type: String, trim: true }],
     inventoryState: {

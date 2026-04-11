@@ -1,9 +1,14 @@
 import { api } from "@/shared/lib/http/httpClient";
 
 export const afterSalesAPI = {
-  warrantyLookup: (identifier) =>
-    api.get("/warranty/lookup", {
-      params: { identifier },
+  warrantyLookup: ({ phone, imeiOrSerial, identifier } = {}) =>
+    api.get("/warranty/search", {
+      params: {
+        ...(phone ? { phone } : {}),
+        ...(imeiOrSerial || identifier
+          ? { imeiOrSerial: imeiOrSerial || identifier }
+          : {}),
+      },
     }),
   listDevices: (params = {}) => api.get("/devices", { params }),
   getDeviceById: (id) => api.get(`/devices/${id}`),

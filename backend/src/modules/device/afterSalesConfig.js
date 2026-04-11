@@ -3,7 +3,13 @@ export const TRACKING_MODES = Object.freeze({
   SERIALIZED: "SERIALIZED",
 });
 
+export const WARRANTY_PROVIDERS = Object.freeze({
+  BRAND: "BRAND",
+  STORE: "STORE",
+});
+
 export const IDENTIFIER_POLICIES = Object.freeze({
+  NONE: "NONE",
   IMEI: "IMEI",
   SERIAL: "SERIAL",
   IMEI_OR_SERIAL: "IMEI_OR_SERIAL",
@@ -36,7 +42,7 @@ export const WARRANTY_STATUSES = Object.freeze({
 export const DEFAULT_AFTER_SALES_BY_PRODUCT_TYPE = Object.freeze({
   SMARTPHONE: {
     trackingMode: TRACKING_MODES.SERIALIZED,
-    identifierPolicy: IDENTIFIER_POLICIES.IMEI_AND_SERIAL,
+    identifierPolicy: IDENTIFIER_POLICIES.IMEI,
     warrantyMonths: 12,
   },
   TABLET: {
@@ -54,6 +60,16 @@ export const DEFAULT_AFTER_SALES_BY_PRODUCT_TYPE = Object.freeze({
     identifierPolicy: IDENTIFIER_POLICIES.SERIAL,
     warrantyMonths: 12,
   },
+  HEADPHONE: {
+    trackingMode: TRACKING_MODES.NONE,
+    identifierPolicy: IDENTIFIER_POLICIES.NONE,
+    warrantyMonths: 12,
+  },
+  ACCESSORIES: {
+    trackingMode: TRACKING_MODES.NONE,
+    identifierPolicy: IDENTIFIER_POLICIES.NONE,
+    warrantyMonths: 0,
+  },
 });
 
 const normalizeKey = (value) => String(value || "").trim().toUpperCase();
@@ -66,14 +82,24 @@ const toOptionalNumber = (value) => {
   return Number.isFinite(parsed) && parsed >= 0 ? Math.floor(parsed) : undefined;
 };
 
+export const resolveDefaultWarrantyProvider = (condition = "") =>
+  normalizeKey(condition) === "NEW"
+    ? WARRANTY_PROVIDERS.BRAND
+    : WARRANTY_PROVIDERS.STORE;
+
 export const normalizeAfterSalesInput = (input = {}, { allowUndefined = true } = {}) => {
   const source = input && typeof input === "object" ? input : {};
+  const warrantyProvider = normalizeKey(source.warrantyProvider);
   const trackingMode = normalizeKey(source.trackingMode);
   const identifierPolicy = normalizeKey(source.identifierPolicy);
   const warrantyMonths = toOptionalNumber(source.warrantyMonths);
   const warrantyTerms = String(source.warrantyTerms || "").trim();
 
   const result = {};
+
+  if (warrantyProvider && Object.values(WARRANTY_PROVIDERS).includes(warrantyProvider)) {
+    result.warrantyProvider = warrantyProvider;
+  }
 
   if (trackingMode && Object.values(TRACKING_MODES).includes(trackingMode)) {
     result.trackingMode = trackingMode;
@@ -83,6 +109,8 @@ export const normalizeAfterSalesInput = (input = {}, { allowUndefined = true } =
 
   if (identifierPolicy && Object.values(IDENTIFIER_POLICIES).includes(identifierPolicy)) {
     result.identifierPolicy = identifierPolicy;
+  } else if (!allowUndefined && source.identifierPolicy !== undefined) {
+    result.identifierPolicy = IDENTIFIER_POLICIES.NONE;
   }
 
   if (warrantyMonths !== undefined) {
@@ -101,8 +129,9 @@ const getDefaultConfigFromProductType = (productType = {}) => {
   const typeDefaults = normalizeAfterSalesInput(productType?.afterSalesDefaults || {});
 
   return {
+    warrantyProvider: undefined,
     trackingMode: TRACKING_MODES.NONE,
-    identifierPolicy: IDENTIFIER_POLICIES.SERIAL,
+    identifierPolicy: IDENTIFIER_POLICIES.NONE,
     warrantyMonths: 0,
     warrantyTerms: "",
     ...(namedDefault || {}),
@@ -113,10 +142,21 @@ const getDefaultConfigFromProductType = (productType = {}) => {
 export const mergeAfterSalesConfig = ({ product = {}, productType = {} } = {}) => {
   const base = getDefaultConfigFromProductType(productType);
   const override = normalizeAfterSalesInput(product?.afterSalesConfig || {});
+  const warrantyProvider =
+    override.warrantyProvider ||
+    base.warrantyProvider ||
+    resolveDefaultWarrantyProvider(product?.condition);
 
   return {
-    trackingMode: override.trackingMode || base.trackingMode,
-    identifierPolicy: override.identifierPolicy || base.identifierPolicy,
+    warrantyProvider,
+    trackingMode:
+      warrantyProvider === WARRANTY_PROVIDERS.STORE
+        ? override.trackingMode || base.trackingMode || TRACKING_MODES.NONE
+        : TRACKING_MODES.NONE,
+    identifierPolicy:
+      warrantyProvider === WARRANTY_PROVIDERS.STORE
+        ? override.identifierPolicy || base.identifierPolicy || IDENTIFIER_POLICIES.NONE
+        : IDENTIFIER_POLICIES.NONE,
     warrantyMonths:
       override.warrantyMonths !== undefined ? override.warrantyMonths : base.warrantyMonths,
     warrantyTerms:
@@ -124,7 +164,11 @@ export const mergeAfterSalesConfig = ({ product = {}, productType = {} } = {}) =
   };
 };
 
+export const isStoreWarrantyConfig = (config = {}) =>
+  String(config?.warrantyProvider || "").toUpperCase() === WARRANTY_PROVIDERS.STORE;
+
 export const isSerializedConfig = (config = {}) =>
+  isStoreWarrantyConfig(config) &&
   String(config?.trackingMode || "").toUpperCase() === TRACKING_MODES.SERIALIZED;
 
 export const normalizeImei = (value) => String(value || "").replace(/\D+/g, "");
@@ -146,7 +190,11 @@ export const getNormalizedLookupKeys = ({ imei, serialNumber } = {}) => {
 export const ensureIdentifierPolicySatisfied = (config = {}, { imei, serialNumber } = {}) => {
   const normalizedImei = normalizeImei(imei);
   const normalizedSerial = normalizeSerialNumber(serialNumber);
-  const policy = String(config?.identifierPolicy || IDENTIFIER_POLICIES.SERIAL).toUpperCase();
+  const policy = String(config?.identifierPolicy || IDENTIFIER_POLICIES.NONE).toUpperCase();
+
+  if (policy === IDENTIFIER_POLICIES.NONE) {
+    return "";
+  }
 
   if (policy === IDENTIFIER_POLICIES.IMEI && !normalizedImei) {
     return "IMEI is required for this product";
@@ -162,6 +210,23 @@ export const ensureIdentifierPolicySatisfied = (config = {}, { imei, serialNumbe
 
   if (policy === IDENTIFIER_POLICIES.IMEI_AND_SERIAL && (!normalizedImei || !normalizedSerial)) {
     return "Both IMEI and serial number are required for this product";
+  }
+
+  return "";
+};
+
+const SERIAL_NUMBER_PATTERN = /^[A-Z0-9][A-Z0-9./_-]{2,63}$/;
+
+export const validateIdentifierFormat = ({ imei, serialNumber } = {}) => {
+  const normalizedImei = normalizeImei(imei);
+  const normalizedSerial = normalizeSerialNumber(serialNumber);
+
+  if (normalizedImei && !/^\d{15}$/.test(normalizedImei)) {
+    return "IMEI must contain exactly 15 digits";
+  }
+
+  if (normalizedSerial && !SERIAL_NUMBER_PATTERN.test(normalizedSerial)) {
+    return "Serial number format is invalid";
   }
 
   return "";
@@ -189,7 +254,7 @@ export const resolveAfterSalesConfigByProductId = async ({ productId, session = 
   ]);
 
   const productQuery = UniversalProduct.findById(productId)
-    .select("name productType afterSalesConfig")
+    .select("name condition productType afterSalesConfig")
     .populate("productType", "name afterSalesDefaults");
 
   if (session) {

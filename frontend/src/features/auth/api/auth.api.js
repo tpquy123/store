@@ -14,4 +14,10 @@ export const authAPI = {
   checkCustomer: (phoneNumber) =>
     api.get("/auth/check-customer", { params: { phoneNumber } }),
   quickRegister: (data) => api.post("/auth/quick-register", data),
+
+  // Step-up Authentication endpoints
+  requestStepUp: (data) => api.post("/auth/step-up/request", data),
+  verifyStepUp: (data) => api.post("/auth/step-up/verify", data),
+  resendOTP: (data) => api.post("/auth/step-up/resend", data),
+  getStepUpStatus: (action) => api.get("/auth/step-up/status", { params: { action } }),
 };

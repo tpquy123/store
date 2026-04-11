@@ -344,3 +344,44 @@ export const ROLE_PERMISSIONS = Object.freeze({
 export const isSystemRole = (role) => SYSTEM_ROLES.includes(role);
 export const isBranchRole = (role) => BRANCH_ROLES.includes(role);
 export const isTaskRole = (role) => TASK_ROLES.includes(role);
+
+/**
+ * STEP_UP_REQUIRED_ACTIONS — Các action nhạy cảm yêu cầu xác minh danh tính lần 2
+ * trước khi thực hiện. Khi một action có flag này = true, middleware requireStepUp
+ * sẽ yêu cầu X-Step-Up-Token header hợp lệ.
+ */
+export const STEP_UP_REQUIRED_ACTIONS = Object.freeze({
+  [AUTHZ_ACTIONS.PRODUCT_DELETE]: true,
+  [AUTHZ_ACTIONS.ANALYTICS_READ_GLOBAL]: true,
+  [AUTHZ_ACTIONS.ANALYTICS_MANAGE_GLOBAL]: true,
+  [AUTHZ_ACTIONS.USERS_MANAGE_GLOBAL]: true,
+  [AUTHZ_ACTIONS.PROMOTION_MANAGE]: true,
+  [AUTHZ_ACTIONS.WAREHOUSE_WRITE]: true,
+  [AUTHZ_ACTIONS.ORDER_STATUS_MANAGE]: true,
+});
+
+/**
+ * STEP_UP_ACTION_GROUPS — Nhóm các actions nhạy cảm để dùng chung grace period.
+ * Sau khi step-up cho một action trong group, toàn bộ group được unlock
+ * trong thời gian grace period (mặc định 15 phút).
+ */
+export const STEP_UP_ACTION_GROUPS = Object.freeze({
+  PRODUCT_BULK_SENSITIVE: [AUTHZ_ACTIONS.PRODUCT_DELETE, AUTHZ_ACTIONS.PRODUCT_CREATE],
+  FINANCIAL_EXPORT: [AUTHZ_ACTIONS.ANALYTICS_READ_GLOBAL, AUTHZ_ACTIONS.ANALYTICS_MANAGE_GLOBAL],
+  USER_ADMIN: [AUTHZ_ACTIONS.USERS_MANAGE_GLOBAL],
+  INVENTORY_ADJUST: [AUTHZ_ACTIONS.WAREHOUSE_WRITE, AUTHZ_ACTIONS.INVENTORY_WRITE],
+  ORDER_BULK_SENSITIVE: [AUTHZ_ACTIONS.ORDER_STATUS_MANAGE],
+  PROMOTION_ADMIN: [AUTHZ_ACTIONS.PROMOTION_MANAGE],
+});
+
+/**
+ * getActionGroup — Tra cứu nhóm action của một permission key.
+ * @param {string} action - Permission key (e.g. "product.delete")
+ * @returns {string|null} - Group key hoặc null nếu không thuộc group nào
+ */
+export const getActionGroup = (action) => {
+  for (const [groupKey, actions] of Object.entries(STEP_UP_ACTION_GROUPS)) {
+    if (actions.includes(action)) return groupKey;
+  }
+  return null;
+};

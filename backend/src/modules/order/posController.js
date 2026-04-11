@@ -8,15 +8,17 @@ import WarehouseLocation from "../warehouse/WarehouseLocation.js";
 import StockMovement from "../warehouse/StockMovement.js";
 import Device from "../device/Device.js";
 import {
-  activateWarrantyForOrder,
   assignDevicesToOrderItem,
   buildError,
   resolveSerializedItemFlags,
 } from "../device/deviceService.js";
 import {
+  ensureIdentifierPolicySatisfied,
   normalizeImei,
   normalizeSerialNumber,
+  validateIdentifierFormat,
 } from "../device/afterSalesConfig.js";
+import { activateWarrantyForOrder } from "../warranty/warrantyService.js";
 import {
   notifyOrderManagerPendingInStoreOrder,
   sendOrderStageNotifications,
@@ -622,6 +624,8 @@ export const finalizePOSOrder = async (req, res) => {
           itemMap.get(String(orderItem._id)) || itemMap.get(String(orderItem.variantId));
         const serializedTrackingEnabled =
           serializedFlags.get(String(orderItem.productId || ""))?.isSerialized || false;
+        const serializedConfig =
+          serializedFlags.get(String(orderItem.productId || ""))?.config || null;
 
         if (serializedTrackingEnabled) {
           const requestedAssignments = Array.isArray(updateItem?.deviceAssignments)
@@ -646,35 +650,68 @@ export const finalizePOSOrder = async (req, res) => {
               ],
             }).session(session);
 
-            if (!legacyDevice) {
+            if (legacyDevice) {
+              requestedDeviceIds.push(legacyDevice._id);
+            }
+          }
+
+          if (requestedDeviceIds.length) {
+            if (requestedDeviceIds.length !== Number(orderItem.quantity || 0)) {
               throw buildError(
-                `Selected device ${updateItem.imei || updateItem.serialNumber} is unavailable`,
+                `Please select ${orderItem.quantity} device(s) for ${orderItem.productName || orderItem.variantSku}`,
                 400,
-                "DEVICE_SELECTION_INVALID"
+                "DEVICE_ASSIGNMENT_REQUIRED"
               );
             }
 
-            requestedDeviceIds.push(legacyDevice._id);
-          }
-
-          if (requestedDeviceIds.length !== Number(orderItem.quantity || 0)) {
-            throw buildError(
-              `Please select ${orderItem.quantity} device(s) for ${orderItem.productName || orderItem.variantSku}`,
-              400,
-              "DEVICE_ASSIGNMENT_REQUIRED"
+            await assignDevicesToOrderItem({
+              storeId: order.assignedStore.storeId,
+              order,
+              orderItem,
+              requestedDeviceIds,
+              requestedQuantity: Number(orderItem.quantity) || 0,
+              actor: req.user,
+              session,
+              mode: "MANUAL",
+            });
+          } else {
+            const manualIdentifiers = {
+              imei: String(updateItem?.imei || "").trim(),
+              serialNumber: String(updateItem?.serialNumber || "").trim(),
+            };
+            const identifierPolicyError = ensureIdentifierPolicySatisfied(
+              serializedConfig || {},
+              manualIdentifiers
             );
-          }
+            if (identifierPolicyError) {
+              throw buildError(
+                identifierPolicyError,
+                400,
+                "WARRANTY_IDENTIFIER_REQUIRED"
+              );
+            }
 
-          await assignDevicesToOrderItem({
-            storeId: order.assignedStore.storeId,
-            order,
-            orderItem,
-            requestedDeviceIds,
-            requestedQuantity: Number(orderItem.quantity) || 0,
-            actor: req.user,
-            session,
-            mode: "MANUAL",
-          });
+            const identifierFormatError = validateIdentifierFormat(manualIdentifiers);
+            if (identifierFormatError) {
+              throw buildError(
+                identifierFormatError,
+                400,
+                "WARRANTY_IDENTIFIER_INVALID"
+              );
+            }
+
+            if (Number(orderItem.quantity || 0) !== 1) {
+              throw buildError(
+                `Please select registered devices for quantity ${orderItem.quantity} of ${orderItem.productName || orderItem.variantSku}`,
+                400,
+                "DEVICE_ASSIGNMENT_REQUIRED"
+              );
+            }
+
+            orderItem.imei = manualIdentifiers.imei;
+            orderItem.serialNumber = manualIdentifiers.serialNumber;
+            orderItem.deviceAssignments = [];
+          }
         } else if (updateItem?.imei) {
           orderItem.imei = String(updateItem.imei).trim();
           if (updateItem?.serialNumber) {

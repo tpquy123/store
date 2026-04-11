@@ -2,6 +2,7 @@ import mongoose from "mongoose";
 import {
   IDENTIFIER_POLICIES,
   TRACKING_MODES,
+  WARRANTY_PROVIDERS,
 } from "../device/afterSalesConfig.js";
 import {
   PRODUCT_STATUSES,
@@ -123,6 +124,10 @@ const universalProductSchema = new mongoose.Schema(
       default: {},
     },
     afterSalesConfig: {
+      warrantyProvider: {
+        type: String,
+        enum: Object.values(WARRANTY_PROVIDERS),
+      },
       trackingMode: {
         type: String,
         enum: Object.values(TRACKING_MODES),

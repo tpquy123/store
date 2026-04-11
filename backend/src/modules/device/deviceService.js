@@ -1,17 +1,15 @@
 import Device from "./Device.js";
 import DeviceLifecycleHistory from "./DeviceLifecycleHistory.js";
-import WarrantyRecord from "../warranty/WarrantyRecord.js";
 import {
   INVENTORY_STATES,
   SERVICE_STATES,
-  WARRANTY_STATUSES,
-  addMonthsToDate,
   ensureIdentifierPolicySatisfied,
   getNormalizedLookupKeys,
   isSerializedConfig,
   normalizeImei,
   normalizeSerialNumber,
   resolveAfterSalesConfigByProductId,
+  validateIdentifierFormat,
 } from "./afterSalesConfig.js";
 
 export const buildError = (message, status = 400, code = "DEVICE_VALIDATION_ERROR") => {
@@ -148,6 +146,11 @@ export const registerSerializedUnits = async ({
     const policyError = ensureIdentifierPolicySatisfied(productConfig.config, normalizedUnit);
     if (policyError) {
       throw buildError(policyError, 400, "DEVICE_IDENTIFIER_POLICY");
+    }
+
+    const formatError = validateIdentifierFormat(normalizedUnit);
+    if (formatError) {
+      throw buildError(formatError, 400, "DEVICE_IDENTIFIER_INVALID");
     }
 
     for (const key of normalizedUnit.lookupKeys) {
@@ -352,122 +355,9 @@ export const assignDevicesToOrderItem = async ({
   return existingAssignments;
 };
 
-export const activateWarrantyForOrder = async ({
-  order,
-  soldAt,
-  actor = {},
-  session = null,
-} = {}) => {
-  if (!order?.assignedStore?.storeId) return [];
-
-  const activatedRecords = [];
-  const startDate = soldAt instanceof Date ? soldAt : new Date(soldAt || Date.now());
-
-  for (const item of Array.isArray(order.items) ? order.items : []) {
-    const assignments = Array.isArray(item.deviceAssignments) ? item.deviceAssignments : [];
-    if (!assignments.length) continue;
-
-    const configContext = await resolveAfterSalesConfigByProductId({
-      productId: item.productId,
-      session,
-    });
-    if (!configContext || !isSerializedConfig(configContext.config)) {
-      continue;
-    }
-
-    const expiresAt = addMonthsToDate(startDate, configContext.config.warrantyMonths || 0);
-    if (!expiresAt) continue;
-
-    for (const assignment of assignments) {
-      const device = await Device.findById(assignment.deviceId)
-        .setOptions({ skipBranchIsolation: true })
-        .session(session);
-      if (!device) continue;
-
-      const existingActive = await WarrantyRecord.findOne({
-        deviceId: device._id,
-        orderId: order._id,
-        status: { $in: [WARRANTY_STATUSES.ACTIVE, WARRANTY_STATUSES.REPLACED] },
-      })
-        .setOptions({ skipBranchIsolation: true })
-        .session(session);
-
-      if (existingActive) {
-        activatedRecords.push(existingActive);
-        continue;
-      }
-
-      const [record] = await WarrantyRecord.create(
-        [
-          {
-            storeId: order.assignedStore.storeId,
-            deviceId: device._id,
-            orderId: order._id,
-            orderItemId: item._id,
-            customerId: order.customerId || order.userId || null,
-            productId: item.productId,
-            productName: item.productName || item.name || device.productName,
-            variantSku: item.variantSku || device.variantSku,
-            imei: device.imei || assignment.imei || "",
-            serialNumber: device.serialNumber || assignment.serialNumber || "",
-            soldAt: startDate,
-            startDate,
-            warrantyMonths: configContext.config.warrantyMonths || 0,
-            expiresAt,
-            status: expiresAt < new Date() ? WARRANTY_STATUSES.EXPIRED : WARRANTY_STATUSES.ACTIVE,
-            warrantyTerms: configContext.config.warrantyTerms || "",
-          },
-        ],
-        { session }
-      );
-
-      const previousInventoryState = device.inventoryState;
-      const previousServiceState = device.serviceState;
-      device.inventoryState = INVENTORY_STATES.SOLD;
-      device.serviceState =
-        record.status === WARRANTY_STATUSES.ACTIVE
-          ? SERVICE_STATES.UNDER_WARRANTY
-          : previousServiceState;
-      device.currentWarrantyId = record._id;
-      device.reservedFor = undefined;
-      device.saleSnapshot = {
-        orderId: order._id,
-        orderNumber: order.orderNumber,
-        orderItemId: item._id,
-        customerId: order.customerId || order.userId || null,
-        customerName: order.shippingAddress?.fullName || "",
-        customerPhone: order.shippingAddress?.phoneNumber || "",
-        soldAt: startDate,
-      };
-      await device.save({ session });
-
-      await createLifecycleEvent({
-        deviceId: device._id,
-        storeId: device.storeId,
-        orderId: order._id,
-        orderItemId: item._id,
-        eventType: "WARRANTY_ACTIVATED",
-        fromInventoryState: previousInventoryState,
-        toInventoryState: INVENTORY_STATES.SOLD,
-        fromServiceState: previousServiceState,
-        toServiceState: device.serviceState,
-        actorId: actor?._id || null,
-        actorName: getActorName(actor),
-        note: `Warranty activated for order ${order.orderNumber || order._id}`,
-        referenceType: "ORDER",
-        referenceId: String(order._id),
-        metadata: {
-          warrantyRecordId: String(record._id),
-          expiresAt,
-        },
-        session,
-      });
-
-      activatedRecords.push(record);
-    }
-  }
-
-  return activatedRecords;
+export const activateWarrantyForOrder = async (payload = {}) => {
+  const module = await import("../warranty/warrantyService.js");
+  return module.activateWarrantyForOrder(payload);
 };
 
 export const releaseOrderDevices = async ({
@@ -524,42 +414,9 @@ export const releaseOrderDevices = async ({
   return updatedDevices;
 };
 
-export const getPublicWarrantyLookup = async ({ identifier } = {}) => {
-  const lookupKey = normalizeImei(identifier) || normalizeSerialNumber(identifier);
-  if (!lookupKey) {
-    throw buildError("Identifier is required", 400, "WARRANTY_IDENTIFIER_REQUIRED");
-  }
-
-  const device = await Device.findOne({ lookupKeys: lookupKey })
-    .setOptions({ skipBranchIsolation: true });
-  if (!device) {
-    throw buildError("Warranty record not found", 404, "WARRANTY_NOT_FOUND");
-  }
-
-  const record = await WarrantyRecord.findOne({ deviceId: device._id })
-    .sort({ createdAt: -1 })
-    .setOptions({ skipBranchIsolation: true });
-  if (!record) {
-    throw buildError("Warranty record not found", 404, "WARRANTY_NOT_FOUND");
-  }
-
-  const now = new Date();
-  const expiresAt = new Date(record.expiresAt);
-  const effectiveStatus =
-    record.status === WARRANTY_STATUSES.ACTIVE && expiresAt < now
-      ? WARRANTY_STATUSES.EXPIRED
-      : record.status;
-  const remainingMs = Math.max(0, expiresAt.getTime() - now.getTime());
-  const remainingDays = Math.ceil(remainingMs / (24 * 60 * 60 * 1000));
-
-  return {
-    identifier: device.imei || device.serialNumber || lookupKey,
-    productName: record.productName,
-    purchaseDate: record.startDate,
-    warrantyExpirationDate: record.expiresAt,
-    remainingWarrantyDays: remainingDays,
-    warrantyStatus: effectiveStatus,
-  };
+export const getPublicWarrantyLookup = async (payload = {}) => {
+  const module = await import("../warranty/warrantyService.js");
+  return module.getPublicWarrantyLookup(payload);
 };
 
 export const resolveSerializedItemFlags = async ({ items = [], session = null } = {}) => {

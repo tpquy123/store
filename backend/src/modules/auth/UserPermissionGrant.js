@@ -31,8 +31,15 @@ const userPermissionGrantSchema = new mongoose.Schema(
     },
     effect: {
       type: String,
-      enum: ["ALLOW"],
+      enum: ["ALLOW", "DENY"],  // Mở rộng — hỗ trợ Explicit DENY override
       default: "ALLOW",
+      index: true,
+    },
+    // Lý do DENY (dùng cho audit log và UI)
+    deniedReason: {
+      type: String,
+      trim: true,
+      default: "",
     },
     conditions: {
       type: [mongoose.Schema.Types.Mixed],
@@ -67,8 +74,10 @@ const userPermissionGrantSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Include effect trong unique index để cho phép tồn tại đồng thời ALLOW + DENY
+// cho cùng một permissionKey (dùng trong trường hợp override đặc biệt)
 userPermissionGrantSchema.index(
-  { userId: 1, permissionKey: 1, scopeType: 1, scopeRef: 1, status: 1 },
+  { userId: 1, permissionKey: 1, scopeType: 1, scopeRef: 1, effect: 1, status: 1 },
   {
     unique: true,
     partialFilterExpression: { status: "ACTIVE" },
