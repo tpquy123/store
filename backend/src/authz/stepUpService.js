@@ -1,11 +1,11 @@
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
 import bcrypt from "bcryptjs";
-import nodemailer from "nodemailer";
 import StepUpToken from "../modules/auth/StepUpToken.js";
 import StepUpGracePeriod from "../modules/auth/StepUpGracePeriod.js";
 import User from "../modules/auth/User.js";
 import { getActionGroup, STEP_UP_ACTION_GROUPS } from "./actions.js";
+import { sendOTPEmail as sendEmailViaSMTP } from "../services/emailService.js";
 
 const STEP_UP_JWT_SECRET = process.env.STEP_UP_JWT_SECRET || process.env.JWT_SECRET + "_stepup";
 const STEP_UP_TOKEN_TTL_MINUTES = 5;
@@ -39,50 +39,17 @@ const maskPhone = (phone = "") => {
 };
 
 // ────────────────────────────────────────────────────────────────
-//  Helper: gửi OTP qua email
+//  Helper: gửi OTP qua email (delegates to emailService)
 // ────────────────────────────────────────────────────────────────
 const sendOTPEmail = async (email, otp, action) => {
   if (!email) throw new Error("Email address is required for OTP delivery");
-
-  // Nếu không có SMTP config, log ra console (development mode)
-  if (!process.env.SMTP_HOST && !process.env.SENDGRID_API_KEY) {
-    console.warn(`[StepUp DEV] OTP for ${email} (action: ${action}): ${otp}`);
-    return;
-  }
-
-  const transporter = nodemailer.createTransport({
-    host: process.env.SMTP_HOST,
-    port: Number(process.env.SMTP_PORT) || 587,
-    secure: process.env.SMTP_SECURE === "true",
-    auth: {
-      user: process.env.SMTP_USER,
-      pass: process.env.SMTP_PASS,
-    },
-  });
-
-  await transporter.sendMail({
-    from: process.env.SMTP_FROM || "noreply@smartmobilestore.vn",
+  // Delegates to central emailService — will throw if SMTP not configured
+  await sendEmailViaSMTP({
     to: email,
-    subject: `[SmartMobile] Mã OTP xác nhận thao tác nhạy cảm`,
-    html: `
-      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; padding: 24px;">
-        <h2 style="color: #1a1a2e; margin-bottom: 8px;">Xác nhận thao tác bảo mật</h2>
-        <p style="color: #555; margin-bottom: 20px;">
-          Bạn vừa yêu cầu thực hiện một thao tác cần xác minh danh tính bổ sung.
-        </p>
-        <div style="background: #f5f5f5; border-radius: 8px; padding: 20px; text-align: center; margin-bottom: 20px;">
-          <p style="font-size: 14px; color: #888; margin: 0 0 8px;">Mã OTP của bạn:</p>
-          <p style="font-size: 36px; font-weight: bold; letter-spacing: 8px; color: #1a1a2e; margin: 0;">${otp}</p>
-        </div>
-        <p style="color: #888; font-size: 13px;">
-          Mã có hiệu lực trong <strong>${OTP_TTL_MINUTES} phút</strong>. 
-          Không chia sẻ mã này với bất kỳ ai.
-        </p>
-        <p style="color: #bbb; font-size: 12px; margin-top: 16px;">
-          Nếu bạn không thực hiện yêu cầu này, vui lòng liên hệ bộ phận hỗ trợ ngay lập tức.
-        </p>
-      </div>
-    `,
+    otp,
+    ttlMinutes: OTP_TTL_MINUTES,
+    type: "step_up",
+    action,
   });
 };
 

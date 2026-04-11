@@ -36,7 +36,9 @@
     "test:vnpay-integration": "node src/scripts/test-vnpay-integration.js",
     "test:e2e-oms": "node src/scripts/e2e-oms-workflows.js",
     "monitor:phase6": "node src/scripts/monitoring-phase6-snapshot.js",
-    "phase6:all": "npm run test:order-state-machine && npm run test:vnpay-integration && npm run test:e2e-oms && npm run monitor:phase6"
+    "phase6:all": "npm run test:order-state-machine && npm run test:vnpay-integration && npm run test:e2e-oms && npm run monitor:phase6",
+    "test:email-otp": "node src/scripts/test-email-otp.js",
+    "test:smtp": "node -e \"import('./src/services/emailService.js').then(m=>m.testSMTPConnection()).then(()=>process.exit(0)).catch(e=>{console.error(e.message);process.exit(1);})\""
   },
   "keywords": [],
   "author": "",

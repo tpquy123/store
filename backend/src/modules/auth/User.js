@@ -209,6 +209,17 @@ const userSchema = new mongoose.Schema(
       },
     },
 
+    /** True khi khách hàng đã xác thực email qua OTP */
+    emailVerified: {
+      type: Boolean,
+      default: false,
+    },
+
+    emailVerifiedAt: {
+      type: Date,
+      default: null,
+    },
+
     province: {
       type: String,
       trim: true,
