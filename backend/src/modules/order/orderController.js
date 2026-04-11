@@ -1666,6 +1666,7 @@ export const createOrder = async (req, res) => {
 
   let assignedStore = null;
   let usedStoreRouting = false;
+  let routingDecision = null;
 
   try {
     const {
@@ -1722,8 +1723,79 @@ export const createOrder = async (req, res) => {
     const processedItems = await buildProcessedItems(items, session);
 
     const activeStoreCount = await Store.countDocuments({ status: "ACTIVE" }).session(session);
-    // Disable automatic routing for HOME_DELIVERY. Only use routing if preferredStoreId is provided (typically for CLICK_AND_COLLECT)
-    const canUseStoreRouting = activeStoreCount > 0 && (effectiveFulfillment === "CLICK_AND_COLLECT" && preferredStoreId);
+    const canAutoRouteHomeDelivery =
+      activeStoreCount > 0 &&
+      effectiveFulfillment === "HOME_DELIVERY" &&
+      Boolean(shippingAddress?.province);
+    const canRouteClickAndCollect =
+      activeStoreCount > 0 &&
+      effectiveFulfillment === "CLICK_AND_COLLECT" &&
+      Boolean(preferredStoreId);
+
+    if (canAutoRouteHomeDelivery) {
+      const routingResult = await routingService.findBestStore(processedItems, shippingAddress, {
+        session,
+      });
+
+      if (routingResult?.success && routingResult.store) {
+        assignedStore = routingResult.store;
+        routingDecision = routingResult.routingDecision || null;
+        usedStoreRouting = true;
+
+        if (routingResult.canReserve) {
+          await routingService.reserveInventory(assignedStore._id, processedItems, { session });
+
+          omniLog.info("createOrder: inventory reserved", {
+            storeId: assignedStore._id,
+            storeCode: assignedStore.code,
+            items: processedItems.length,
+            selectionType: routingDecision?.selectionType,
+          });
+        } else {
+          omniLog.warn("createOrder: store assigned without inventory reservation", {
+            storeId: assignedStore._id,
+            storeCode: assignedStore.code,
+            selectionType: routingDecision?.selectionType,
+            missingQuantity:
+              routingDecision?.selectedBranch?.stockSummary?.missingQuantity || 0,
+          });
+        }
+      } else {
+        omniLog.warn("createOrder: auto routing skipped", {
+          fulfillmentType: effectiveFulfillment,
+          province: shippingAddress?.province,
+          message: routingResult?.message,
+        });
+      }
+    } else if (canRouteClickAndCollect) {
+      assignedStore = await Store.findOne({
+        _id: preferredStoreId,
+        status: "ACTIVE",
+        "services.clickAndCollect": true,
+      }).session(session);
+
+      if (!assignedStore) {
+        const err = new Error("KhÃ´ng tÃ¬m tháº¥y cá»­a hÃ ng nháº­n hÃ ng há»£p lá»‡");
+        err.httpStatus = 400;
+        throw err;
+      }
+
+      await routingService.reserveInventory(assignedStore._id, processedItems, { session });
+      usedStoreRouting = true;
+      routingDecision = {
+        selectionType: "PREFERRED_PICKUP_STORE",
+        reason: "customer-selected-pickup-store",
+      };
+
+      omniLog.info("createOrder: inventory reserved", {
+        storeId: assignedStore._id,
+        storeCode: assignedStore.code,
+        items: processedItems.length,
+        selectionType: routingDecision.selectionType,
+      });
+    }
+    // Legacy routing block kept disabled while the Haversine selector is active.
+    const canUseStoreRouting = false;
 
     if (canUseStoreRouting) {
       if (effectiveFulfillment === "CLICK_AND_COLLECT") {
@@ -1857,19 +1929,19 @@ export const createOrder = async (req, res) => {
     appendHistory(order, order.status, req.user._id, "Order created from checkout");
 
     await order.save({ session });
-
-    await order.save({ session });
     await recalculateAvailabilityForItems(processedItems, session);
 
     if (assignedStore) {
-      if (!assignedStore.capacity) assignedStore.capacity = {};
-      if (!assignedStore.stats) assignedStore.stats = {};
-
-      assignedStore.capacity.currentOrders =
-        toNumber(assignedStore.capacity?.currentOrders, 0) + 1;
-      assignedStore.stats.totalOrders =
-        toNumber(assignedStore.stats?.totalOrders, 0) + 1;
-      await assignedStore.save({ session, validateModifiedOnly: true });
+      await Store.findByIdAndUpdate(
+        assignedStore._id,
+        {
+          $inc: {
+            "capacity.currentOrders": 1,
+            "stats.totalOrders": 1,
+          },
+        },
+        { session }
+      );
     }
 
     if (!isDeferredPayment) {
@@ -1888,6 +1960,7 @@ export const createOrder = async (req, res) => {
       storeId: assignedStore?._id,
       total: normalizedOrder.totalAmount,
       usedStoreRouting,
+      routingSelectionType: routingDecision?.selectionType,
     });
 
     await trackOmnichannelEvent({
@@ -1904,6 +1977,8 @@ export const createOrder = async (req, res) => {
       metadata: {
         totalAmount: normalizedOrder.totalAmount,
         usedStoreRouting,
+        routingSelectionType: routingDecision?.selectionType || "",
+        routingCanFulfill: routingDecision?.canFulfill ?? null,
       },
     });
 
@@ -1922,6 +1997,7 @@ export const createOrder = async (req, res) => {
       fulfillmentType: req.body?.fulfillmentType,
       preferredStoreId: req.body?.preferredStoreId,
       usedStoreRouting,
+      routingSelectionType: routingDecision?.selectionType,
       error: error.message,
     });
 
@@ -1940,6 +2016,7 @@ export const createOrder = async (req, res) => {
       errorMessage: error.message,
       metadata: {
         usedStoreRouting,
+        routingSelectionType: routingDecision?.selectionType || "",
       },
     });
 

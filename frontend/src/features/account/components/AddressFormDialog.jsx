@@ -13,6 +13,7 @@ import {
   DialogFooter,
   DialogDescription,
 } from "@/shared/ui/dialog";
+import { provinces } from "@/shared/constants/provinces";
 
 const AddressFormDialog = ({
   open,
@@ -111,13 +112,24 @@ const AddressFormDialog = ({
 
             <div className="space-y-2">
               <Label htmlFor="province">Tỉnh/Thành phố</Label>
-              <Input
+              <select
                 id="province"
                 name="province"
                 value={formData.province}
                 onChange={handleChange}
                 required
-              />
+                className="flex h-10 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              >
+                <option value="">Chọn tỉnh/thành phố</option>
+                {!provinces.includes(formData.province) && formData.province ? (
+                  <option value={formData.province}>{formData.province}</option>
+                ) : null}
+                {provinces.map((province) => (
+                  <option key={province} value={province}>
+                    {province}
+                  </option>
+                ))}
+              </select>
             </div>
 
             <div className="space-y-2">

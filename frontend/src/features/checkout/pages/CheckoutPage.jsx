@@ -768,9 +768,17 @@ const CheckoutPage = () => {
         }, 300);
       }
     } catch (error) {
-      console.error("Order error:", error);
-      setError(error.response?.data?.message || "Đặt hàng thất bại");
-      toast.error("Đặt hàng thất bại");
+      console.error("Order error:", {
+        message: error?.message,
+        status: error?.response?.status,
+        data: error?.response?.data,
+      });
+      const errorMessage =
+        error?.response?.data?.message ||
+        error?.response?.data?.error ||
+        "Đặt hàng thất bại";
+      setError(errorMessage);
+      toast.error(errorMessage);
     } finally {
       if (formData.paymentMethod !== "VNPAY") {
         setIsLoading(false);

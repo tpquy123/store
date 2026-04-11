@@ -1,0 +1,45 @@
+[
+  {
+    "id": "branch-can-tho",
+    "code": "BR-CT",
+    "name": "Chi nhánh Cần Thơ",
+    "province": "Cần Thơ",
+    "lat": 10.033333,
+    "lng": 105.783333,
+    "region": "south",
+    "isDefault": false,
+    "aliases": ["Cần Thơ", "Can Tho", "CT", "CTO", "BR-CT", "WH-CT"]
+  },
+  {
+    "id": "branch-hcm",
+    "code": "BR-HCM",
+    "name": "Chi nhánh TP.HCM",
+    "province": "TP.HCM",
+    "lat": 10.776889,
+    "lng": 106.700806,
+    "region": "south",
+    "isDefault": true,
+    "aliases": [
+      "TP.HCM",
+      "TP HCM",
+      "Thành phố Hồ Chí Minh",
+      "Hồ Chí Minh",
+      "Ho Chi Minh",
+      "HCM",
+      "SG",
+      "BR-HCM",
+      "WH-HCM"
+    ]
+  },
+  {
+    "id": "branch-hanoi",
+    "code": "BR-HN",
+    "name": "Chi nhánh Hà Nội",
+    "province": "Hà Nội",
+    "lat": 21.028472,
+    "lng": 105.854167,
+    "region": "north",
+    "isDefault": false,
+    "aliases": ["Hà Nội", "Ha Noi", "HN", "BR-HN", "WH-HN"]
+  }
+]

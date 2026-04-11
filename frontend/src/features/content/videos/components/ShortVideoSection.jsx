@@ -131,7 +131,7 @@ const ShortVideoSection = ({
       </div>
 
       {/* Ẩn thanh cuộn ngang trên mobile (tùy chọn đẹp hơn) */}
-      <style jsx>{`
+      <style>{`
         .hide-scrollbar {
           -ms-overflow-style: none;
           scrollbar-width: none;

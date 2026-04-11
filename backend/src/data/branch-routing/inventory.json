@@ -1,0 +1,17 @@
+[
+  { "branchId": "branch-can-tho", "productId": "iphone-15-128-black", "quantity": 12 },
+  { "branchId": "branch-can-tho", "productId": "iphone-15-256-blue", "quantity": 6 },
+  { "branchId": "branch-can-tho", "productId": "airpods-pro-2", "quantity": 20 },
+  { "branchId": "branch-can-tho", "productId": "watch-s10-42-black", "quantity": 8 },
+  { "branchId": "branch-can-tho", "productId": "macbook-air-m3-13", "quantity": 3 },
+  { "branchId": "branch-hcm", "productId": "iphone-15-128-black", "quantity": 25 },
+  { "branchId": "branch-hcm", "productId": "iphone-15-256-blue", "quantity": 18 },
+  { "branchId": "branch-hcm", "productId": "airpods-pro-2", "quantity": 30 },
+  { "branchId": "branch-hcm", "productId": "watch-s10-42-black", "quantity": 15 },
+  { "branchId": "branch-hcm", "productId": "macbook-air-m3-13", "quantity": 10 },
+  { "branchId": "branch-hanoi", "productId": "iphone-15-128-black", "quantity": 22 },
+  { "branchId": "branch-hanoi", "productId": "iphone-15-256-blue", "quantity": 20 },
+  { "branchId": "branch-hanoi", "productId": "airpods-pro-2", "quantity": 16 },
+  { "branchId": "branch-hanoi", "productId": "watch-s10-42-black", "quantity": 12 },
+  { "branchId": "branch-hanoi", "productId": "macbook-air-m3-13", "quantity": 14 }
+]
