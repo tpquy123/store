@@ -204,12 +204,14 @@ const PublicFooter = ({ footerCategoryLinks, setDesktopStoreMenuOpen }) => (
                   </Link>
                 </li>
                 <li>
-                  <Link
-                    to="/warranty-check"
+                  <a
+                    href="http://localhost:5001"
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="text-sm md:text-base text-gray-400 hover:text-white transition-colors duration-300"
                   >
                     Tra Cứu Bảo Hành
-                  </Link>
+                  </a>
                 </li>
                 <li>
                   <a
