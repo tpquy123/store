@@ -205,7 +205,7 @@ const PublicFooter = ({ footerCategoryLinks, setDesktopStoreMenuOpen }) => (
                 </li>
                 <li>
                   <a
-                    href="http://localhost:5001"
+                    href="https://warranty-h1wg.onrender.com"
                     target="_blank"
                     rel="noopener noreferrer"
                     className="text-sm md:text-base text-gray-400 hover:text-white transition-colors duration-300"

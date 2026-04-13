@@ -289,7 +289,7 @@ const VATInvoicesPage = () => {
           </div>
           <div class="text-center border-t border-black pt-2">
             <p class="font-bold text-xs">BẢO HÀNH PHẦN CỨNG VÀ PHẦN MỀM TRONG 6 THÁNG (KHÔNG ĐỔI LỖI)</p>
-            <p class="text-xs">Xem thêm các điều khoản bảo hành tại <span class="font-semibold">https://ninhkieu-istore-ct.onrender.com</span></p>
+            <p class="text-xs">Xem thêm các điều khoản bảo hành tại <span class="font-semibold">https://warranty-h1wg.onrender.com</span></p>
           </div>
         </div>
       </body>

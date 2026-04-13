@@ -273,7 +273,7 @@ const CASHIERDashboard = () => {
           </div>
           <div class="text-center text-xs border-t border-black pt-2">
             <p class="font-bold">BẢO HÀNH PHẦN CỨNG VÀ PHẦN MỀM TRONG 6 THÁNG (KHÔNG ĐỔI LỖI)</p>
-            <p>Xem thêm các điều khoản bảo hành tại <span class="font-semibold">https://ninhkieu-istore-ct.onrender.com</span></p>
+            <p>Xem thêm các điều khoản bảo hành tại <span class="font-semibold">https://warranty-h1wg.onrender.com</span></p>
           </div>
         </div>
       </body>

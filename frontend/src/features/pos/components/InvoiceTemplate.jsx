@@ -18,7 +18,7 @@ const InvoiceTemplate = ({ order, editableData, storeInfo }) => {
     storeAddress = "Số 58 Đường 3 Tháng 2 - Phường Xuân Khánh - Quận Ninh Kiều, Cần Thơ",
     hotline = "0917.755.765",
     storePhone = "0981.774.710",
-    warrantyUrl = "https://ninhkieu-istore-ct.onrender.com",
+    warrantyUrl = "https://warranty-h1wg.onrender.com",
   } = storeInfo || {};
 
   const {
